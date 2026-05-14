@@ -3,6 +3,7 @@
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+from utils.state import save_state, load_state
 
 
 @dataclass
@@ -21,9 +22,16 @@ class RiskManager:
         self.balance: float = cfg.starting_balance
         self.day_start_balance: float = cfg.starting_balance
         self._day_start_ts: float = time.time()
-        self.open_positions: dict[str, int] = {}   # ticker -> contract count
         self.halted: bool = False
         self.halt_reason: str = ""
+        # Load persisted positions from last run
+        state = load_state()
+        self.open_positions: dict[str, int] = {
+            k: v for k, v in state.get("open_positions", {}).items() if v > 0
+        }
+        if self.open_positions:
+            from utils.logger import log
+            log.info(f"[risk] Restored {len(self.open_positions)} open positions from state")
 
     # ── Balance updates ───────────────────────────────────────────────────────
 
@@ -110,6 +118,7 @@ class RiskManager:
 
     def record_open(self, ticker: str, contracts: int):
         self.open_positions[ticker] = self.open_positions.get(ticker, 0) + contracts
+        save_state(self.open_positions)
 
     def record_close(self, ticker: str, contracts: int):
         existing = self.open_positions.get(ticker, 0)
@@ -118,6 +127,7 @@ class RiskManager:
             self.open_positions.pop(ticker, None)
         else:
             self.open_positions[ticker] = remaining
+        save_state(self.open_positions)
 
     def status(self) -> dict:
         self._reset_day_if_needed()

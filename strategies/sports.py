@@ -79,13 +79,16 @@ def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2)))
 
 
+TRAIL_DISTANCE = 5   # cents
+
 @dataclass
 class SportsPosition:
     ticker: str
-    side: str        # team abbreviation
+    side: str
     contracts: int
     entry_price_c: int
     entry_time: float
+    high_water_c: int = 0
 
 
 class SportsStrategy:
@@ -219,11 +222,16 @@ class SportsStrategy:
                 bid = float(m.get("yes_bid_dollars") or 0) if pos.side == "yes" else float(m.get("no_bid_dollars") or 0)
                 bid_c = int(bid * 100)
                 if bid_c > 0:
+                    if bid_c > pos.high_water_c:
+                        pos.high_water_c = bid_c
+                    trail_stop = pos.high_water_c - TRAIL_DISTANCE
                     pnl = bid_c - pos.entry_price_c
                     if pnl >= 10:
                         self._exit(pos, f"profit target +{pnl}c")
                     elif pnl <= -8:
                         self._exit(pos, f"stop loss {pnl}c")
+                    elif bid_c < trail_stop and pos.high_water_c > pos.entry_price_c + 4:
+                        self._exit(pos, f"trailing stop (peak={pos.high_water_c}¢)")
             except Exception as e:
                 log.warning(f"[sports] Exit check {ticker}: {e}")
 
@@ -328,6 +336,7 @@ class SportsStrategy:
             self._positions[ticker] = SportsPosition(
                 ticker=ticker, side=side, contracts=contracts,
                 entry_price_c=price_c, entry_time=time.time(),
+                high_water_c=price_c,
             )
             log.info(
                 f"[sports] ENTER {ticker} {side.upper()} x{contracts} @ {price_c}c"

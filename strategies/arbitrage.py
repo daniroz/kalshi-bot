@@ -11,30 +11,59 @@ If Kalshi YES > Polymarket YES by enough → buy NO on Kalshi (equivalent to sho
 
 import re
 import time
+import math
 from typing import Optional
+from collections import Counter
 from clients.kalshi import KalshiClient
 from clients.polymarket import PolymarketClient
 from risk.manager import RiskManager
 from utils.markets import get_liquid_markets
+from utils.fill_tracker import FillTracker
 from utils.logger import log
 
 
 KALSHI_FEE = 0.03
 POLY_FEE   = 0.02
-TOTAL_FEE  = KALSHI_FEE + POLY_FEE - 0.01  # slight reduction to catch more opps
+TOTAL_FEE  = KALSHI_FEE + POLY_FEE - 0.01
 
+
+STOPWORDS = {"the","a","an","is","in","of","to","and","or","will","by","on",
+             "at","be","it","for","as","this","that","with","are","was","not",
+             "above","below","close","end","yes","no"}
 
 def _normalize(text: str) -> str:
-    """Lowercase + strip punctuation for fuzzy matching."""
-    return re.sub(r"[^a-z0-9 ]", "", text.lower())
+    return re.sub(r"[^a-z0-9 ]", " ", text.lower())
 
+def _tokens(text: str) -> list[str]:
+    return [t for t in _normalize(text).split() if t not in STOPWORDS and len(t) > 1]
 
-def _keyword_overlap(a: str, b: str) -> float:
-    wa = set(_normalize(a).split())
-    wb = set(_normalize(b).split())
-    if not wa or not wb:
+def _tfidf_score(a: str, b: str, corpus: list[str]) -> float:
+    """TF-IDF cosine similarity between two strings given a corpus."""
+    all_docs = corpus + [a, b]
+    N = len(all_docs)
+    df: Counter = Counter()
+    for doc in all_docs:
+        for tok in set(_tokens(doc)):
+            df[tok] += 1
+
+    def vec(text: str) -> dict:
+        toks = _tokens(text)
+        tf = Counter(toks)
+        total = len(toks) or 1
+        return {t: (tf[t] / total) * math.log(N / (df[t] + 1)) for t in tf}
+
+    va, vb = vec(a), vec(b)
+    keys = set(va) & set(vb)
+    if not keys:
         return 0.0
-    return len(wa & wb) / len(wa | wb)
+    dot = sum(va[k] * vb[k] for k in keys)
+    na  = math.sqrt(sum(v*v for v in va.values())) or 1
+    nb  = math.sqrt(sum(v*v for v in vb.values())) or 1
+    return dot / (na * nb)
+
+def _extract_numbers(text: str) -> set[str]:
+    """Extract numeric tokens (years, dollar amounts, percentages)."""
+    return set(re.findall(r'\b\d+\.?\d*\b', text))
 
 
 class ArbitrageStrategy:
@@ -50,26 +79,37 @@ class ArbitrageStrategy:
         self.risk = risk
         self.min_edge = min_edge
         self._poly_cache: list[dict] = []
-        self._last_entry: dict[str, float] = {}   # ticker -> timestamp
-        self._cooldown = 600  # 10 min between re-entries on same ticker
+        self._poly_titles: list[str] = []
+        self._last_entry: dict[str, float] = {}
+        self._cooldown = 600
+        self._fills = FillTracker(kalshi)
 
     def _refresh_poly(self):
         try:
             self._poly_cache = self.poly.get_markets(limit=200)
+            self._poly_titles = [m.get("question", "") for m in self._poly_cache]
         except Exception as e:
             log.warning(f"[arb] Polymarket fetch failed: {e}")
 
     def _find_poly_match(self, kalshi_title: str) -> Optional[dict]:
-        best, best_score = None, 0.4   # minimum threshold
+        if not self._poly_cache:
+            return None
+        best, best_score = None, 0.25   # min threshold (higher = stricter)
+        k_nums = _extract_numbers(kalshi_title)
         for m in self._poly_cache:
             q = m.get("question", "")
-            score = _keyword_overlap(kalshi_title, q)
+            # Numbers must overlap (year, strike price, etc.)
+            p_nums = _extract_numbers(q)
+            if k_nums and p_nums and not (k_nums & p_nums):
+                continue   # different numbers = different markets
+            score = _tfidf_score(kalshi_title, q, self._poly_titles)
             if score > best_score:
                 best, best_score = m, score
         return best
 
     def scan(self) -> list[dict]:
         """Return list of arbitrage opportunities."""
+        self._fills.check_stale(self.risk)
         self._refresh_poly()
         if not self._poly_cache:
             return []
@@ -152,11 +192,13 @@ class ArbitrageStrategy:
                 yes_price=price_c if side == "yes" else None,
                 no_price=price_c  if side == "no"  else None,
             )
+            order_id = result.get("order", {}).get("order_id", "")
             self.risk.record_open(ticker, contracts)
             self._last_entry[ticker] = time.time()
+            self._fills.track(order_id, ticker, contracts)
             log.info(
                 f"[arb] BUY {side.upper()} {ticker} x{contracts} @ {price_c}¢  "
-                f"edge={edge*100:.1f}¢  order_id={result.get('order', {}).get('order_id')}"
+                f"edge={edge*100:.1f}¢  order_id={order_id}"
             )
             return True
         except Exception as e:

@@ -38,7 +38,10 @@ from strategies.momentum import MomentumStrategy
 from strategies.intraday import IntradayStrategy
 from strategies.sports import SportsStrategy
 from strategies.crypto import CryptoStrategy
+from strategies.news import NewsStrategy
+from strategies.calendar import CalendarStrategy
 from utils.logger import log, console
+from utils.alerts import alert_trade, alert_error, alert_balance, alert_halt
 
 
 def build_clients(demo: bool):
@@ -168,6 +171,8 @@ def main_loop(kalshi, poly, risk):
     intra   = IntradayStrategy(kalshi, risk)
     sports  = SportsStrategy(kalshi, risk)
     crypto  = CryptoStrategy(kalshi, risk)
+    news    = NewsStrategy(kalshi, risk)
+    cal     = CalendarStrategy(kalshi, risk)
 
     use_arb     = os.getenv("STRATEGY_ARBITRAGE",     "true").lower() == "true"
     use_mm      = os.getenv("STRATEGY_MARKET_MAKER",  "true").lower() == "true"
@@ -179,6 +184,8 @@ def main_loop(kalshi, poly, risk):
     use_intra   = os.getenv("STRATEGY_INTRADAY",      "true").lower() == "true"
     use_sports  = os.getenv("STRATEGY_SPORTS",        "true").lower() == "true"
     use_crypto  = os.getenv("STRATEGY_CRYPTO",        "true").lower() == "true"
+    use_news    = os.getenv("STRATEGY_NEWS",          "true").lower() == "true"
+    use_cal     = os.getenv("STRATEGY_CALENDAR",      "true").lower() == "true"
 
     cycle = 0
     LOOP_INTERVAL      = 15  # seconds between cycles
@@ -194,8 +201,13 @@ def main_loop(kalshi, poly, risk):
             if cycle % BALANCE_SYNC_EVERY == 0:
                 try:
                     bal = kalshi.get_balance()
-                    dollars = bal.get("balance", 0)  # already in dollars
+                    dollars = bal.get("balance", 0)
+                    prev_bal = risk.balance
                     risk.update_balance(dollars)
+                    # Send balance alert every 30 min
+                    if cycle % 120 == 0:
+                        starting = float(os.getenv("STARTING_BALANCE", 250))
+                        alert_balance(dollars, dollars - starting, (dollars - starting) / starting * 100)
                 except Exception as e:
                     log.warning(f"Balance sync failed: {e}")
 
@@ -204,6 +216,7 @@ def main_loop(kalshi, poly, risk):
 
             if risk.halted:
                 log.warning(f"[bold red]HALTED:[/bold red] {risk.halt_reason}. Sleeping 5 min.")
+                alert_halt(risk.halt_reason)
                 mm.cancel_all()
                 time.sleep(300)
                 continue
@@ -260,10 +273,21 @@ def main_loop(kalshi, poly, risk):
                     for opp in crypto.scan()[:5]:
                         crypto.execute(opp)
 
-            with ThreadPoolExecutor(max_workers=10) as ex:
+            def run_news():
+                if use_news:
+                    for opp in news.scan()[:5]:
+                        news.execute(opp)
+
+            def run_cal():
+                if use_cal:
+                    for opp in cal.scan()[:5]:
+                        cal.execute(opp)
+
+            with ThreadPoolExecutor(max_workers=12) as ex:
                 futures = [ex.submit(f) for f in (
                     run_smart, run_weather, run_mis, run_arb, run_mm,
                     run_ob, run_mom, run_intra, run_sports, run_crypto,
+                    run_news, run_cal,
                 )]
                 for f in as_completed(futures):
                     try:
@@ -272,6 +296,7 @@ def main_loop(kalshi, poly, risk):
                         import traceback, sys
                         tb = traceback.format_exc()
                         log.error(f"Strategy error: {tb}")
+                        alert_error("main", str(e))
                         print(tb, file=sys.stderr, flush=True)
 
             log.info(f"Cycle {cycle} done. Sleeping {LOOP_INTERVAL}s.")

@@ -31,6 +31,8 @@ EXPIRY_BUFFER   = 1800  # exit 30 min before market closes
 COOLDOWN_S      = 120
 
 
+TRAIL_DISTANCE = 4   # cents below high water to trigger trailing stop
+
 @dataclass
 class IntradayPosition:
     ticker: str
@@ -39,6 +41,7 @@ class IntradayPosition:
     entry_price_c: int
     entry_time: float
     close_time: float
+    high_water_c: int = 0
 
 
 class IntradayStrategy:
@@ -102,14 +105,21 @@ class IntradayStrategy:
                 self._exit(pos, "expiry approaching")
                 continue
 
+            # Update high water mark
+            if current_c > pos.high_water_c:
+                pos.high_water_c = current_c
+
             pnl = current_c - pos.entry_price_c
             if pos.side == "no":
-                pnl = -pnl  # NO profits when YES price falls
+                pnl = -pnl
 
+            trail_stop = pos.high_water_c - TRAIL_DISTANCE
             if pnl >= PROFIT_TARGET:
                 self._exit(pos, f"profit target +{pnl}c")
             elif pnl <= -STOP_LOSS:
                 self._exit(pos, f"stop loss {pnl}c")
+            elif current_c < trail_stop and pos.high_water_c > pos.entry_price_c + 3:
+                self._exit(pos, f"trailing stop (peak={pos.high_water_c}¢ now={current_c}¢)")
 
     def _exit(self, pos: IntradayPosition, reason: str):
         try:
@@ -220,7 +230,7 @@ class IntradayStrategy:
             self._positions[ticker] = IntradayPosition(
                 ticker=ticker, side=side, contracts=contracts,
                 entry_price_c=price_c, entry_time=time.time(),
-                close_time=close_ts,
+                close_time=close_ts, high_water_c=price_c,
             )
             log.info(
                 f"[intra] ENTER {ticker} {side.upper()} x{contracts} @ {price_c}c"

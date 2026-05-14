@@ -35,6 +35,8 @@ STOP_LOSS       = 5      # cents
 PRICE_POLL_S    = 20     # poll Binance every 20s
 
 
+TRAIL_DISTANCE = 4   # cents
+
 @dataclass
 class CryptoPosition:
     ticker: str
@@ -43,6 +45,7 @@ class CryptoPosition:
     entry_price_c: int
     entry_time: float
     expiry_ts: float
+    high_water_c: int = 0
 
 
 def _norm_cdf(x: float) -> float:
@@ -131,11 +134,16 @@ class CryptoStrategy:
                 m = self.kalshi.get_market(ticker).get("market", {})
                 bid_c = int(float(m.get("yes_bid_dollars" if pos.side == "yes" else "no_bid_dollars") or 0) * 100)
                 if bid_c:
+                    if bid_c > pos.high_water_c:
+                        pos.high_water_c = bid_c
+                    trail_stop = pos.high_water_c - TRAIL_DISTANCE
                     pnl = bid_c - pos.entry_price_c
                     if pnl >= PROFIT_TARGET:
                         self._exit(pos, f"profit +{pnl}c")
                     elif pnl <= -STOP_LOSS:
                         self._exit(pos, f"stop {pnl}c")
+                    elif bid_c < trail_stop and pos.high_water_c > pos.entry_price_c + 3:
+                        self._exit(pos, f"trailing stop (peak={pos.high_water_c}¢)")
             except Exception as e:
                 log.warning(f"[crypto] Exit check {ticker}: {e}")
 
@@ -250,7 +258,7 @@ class CryptoStrategy:
             self._positions[ticker] = CryptoPosition(
                 ticker=ticker, side=side, contracts=contracts,
                 entry_price_c=price_c, entry_time=time.time(),
-                expiry_ts=signal["expiry_ts"],
+                expiry_ts=signal["expiry_ts"], high_water_c=price_c,
             )
             log.info(
                 f"[crypto] ENTER {ticker} {side.upper()} x{contracts} @ {price_c}c"
