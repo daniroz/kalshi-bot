@@ -1,0 +1,25 @@
+# Secrets — NEVER commit these
+.env
+kalshi_private.pem
+*.pem
+*.key
+
+# Runtime data
+kalshi_bot.log
+balance_history.json
+nohup.out
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# macOS
+.DS_Store
