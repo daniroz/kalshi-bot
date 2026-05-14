@@ -123,8 +123,9 @@ class WeatherStrategy:
         self.kalshi = kalshi
         self.risk = risk
         self._last_scan = 0
-        self._scan_interval = 600   # only re-scan weather every 10 min (forecasts don't change faster)
-        self._positions: dict[str, WeatherPosition] = {}
+        self._scan_interval = 600
+        self._positions:   dict[str, WeatherPosition] = {}
+        self._last_entry:  dict[str, float] = {}
 
     def check_exits(self):
         """Exit positions when edge has collapsed or event is approaching."""
@@ -279,6 +280,11 @@ class WeatherStrategy:
         price_c = opp["price_c"]
         edge    = opp["edge"]
 
+        if ticker in self._positions:
+            return False
+        if time.time() - self._last_entry.get(ticker, 0) < 3600:  # 1h cooldown
+            return False
+
         contracts = self.risk.kelly_contracts(price_c, opp["model_prob"], max_contracts=50)
         contracts = max(1, contracts)
 
@@ -296,6 +302,7 @@ class WeatherStrategy:
                 no_price=price_c  if side == "no"  else None,
             )
             self.risk.record_open(ticker, contracts)
+            self._last_entry[ticker] = time.time()
             self._positions[ticker] = WeatherPosition(
                 ticker=ticker, side=side, contracts=contracts,
                 entry_price_c=price_c, model_prob=opp["model_prob"],
@@ -311,4 +318,5 @@ class WeatherStrategy:
             return True
         except Exception as e:
             log.error(f"[weather] Order failed {ticker}: {e}")
+            self.risk.undo_reservation(ticker, contracts)
             return False

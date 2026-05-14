@@ -116,8 +116,15 @@ class ArbitrageStrategy:
 
         kalshi_markets = get_liquid_markets(self.kalshi, min_volume=0)
 
+        # Sports markets (per-game and season-level) are handled by the sports strategy.
+        # Polymarket doesn't reliably carry matching markets for these.
+        SKIP_PREFIXES = ("KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNBA", "KXNHL", "KXMLB")
+
         opps = []
         for km in kalshi_markets:
+            if km["ticker"].startswith(SKIP_PREFIXES):
+                continue
+
             k_yes_ask = float(km.get("yes_ask_dollars") or 0)
             k_yes_bid = float(km.get("yes_bid_dollars") or 0)
             if not k_yes_ask or not k_yes_bid:
@@ -203,4 +210,5 @@ class ArbitrageStrategy:
             return True
         except Exception as e:
             log.error(f"[arb] Order failed {ticker}: {e}")
+            self.risk.undo_reservation(ticker, contracts)
             return False

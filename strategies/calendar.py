@@ -332,4 +332,5 @@ class CalendarStrategy:
             return True
         except Exception as e:
             log.error(f"[cal] Order failed {ticker}: {e}")
+            self.risk.undo_reservation(ticker, contracts)
             return False

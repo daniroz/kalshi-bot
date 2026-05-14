@@ -1,6 +1,7 @@
 """Risk management — position sizing, daily loss limits, exposure caps."""
 
 import time
+import threading
 from dataclasses import dataclass, field
 from typing import Optional
 from utils.state import save_state, load_state
@@ -24,6 +25,7 @@ class RiskManager:
         self._day_start_ts: float = time.time()
         self.halted: bool = False
         self.halt_reason: str = ""
+        self._lock = threading.Lock()
         # Load persisted positions from last run
         state = load_state()
         self.open_positions: dict[str, int] = {
@@ -68,27 +70,30 @@ class RiskManager:
         contracts: int,
         edge_dollars: float,
     ) -> tuple[bool, str]:
-        """Return (approved, reason). Modifies nothing."""
-        if self.halted:
-            return False, f"Bot halted: {self.halt_reason}"
+        """Return (approved, reason). Thread-safe — serializes all approval checks."""
+        with self._lock:
+            if self.halted:
+                return False, f"Bot halted: {self.halt_reason}"
 
-        cost = (yes_price_cents / 100) * contracts
-        existing_contracts = self.open_positions.get(ticker, 0)
-        existing_cost = (yes_price_cents / 100) * existing_contracts
-        total_cost = existing_cost + cost
+            cost = (yes_price_cents / 100) * contracts
+            existing_contracts = self.open_positions.get(ticker, 0)
+            existing_cost = (yes_price_cents / 100) * existing_contracts
+            total_cost = existing_cost + cost
 
-        # Hard cap: total exposure on any ticker never exceeds max_position_scale_pct
-        if total_cost > self.balance * self.cfg.max_position_scale_pct:
-            return False, f"Would exceed {self.cfg.max_position_scale_pct*100:.0f}% max exposure on {ticker} (${total_cost:.2f})"
+            # Hard cap: total exposure on any ticker never exceeds max_position_scale_pct
+            if total_cost > self.balance * self.cfg.max_position_scale_pct:
+                return False, f"Would exceed {self.cfg.max_position_scale_pct*100:.0f}% max exposure on {ticker} (${total_cost:.2f})"
 
-        # Initial entry: capped at max_position_pct
-        if existing_contracts == 0 and cost > self.balance * self.cfg.max_position_pct:
-            return False, f"Initial position too large (${cost:.2f} > {self.cfg.max_position_pct*100:.0f}% of balance)"
+            # Initial entry: capped at max_position_pct
+            if existing_contracts == 0 and cost > self.balance * self.cfg.max_position_pct:
+                return False, f"Initial position too large (${cost:.2f} > {self.cfg.max_position_pct*100:.0f}% of balance)"
 
-        if edge_dollars < self.cfg.min_edge:
-            return False, f"Edge too small (${edge_dollars:.3f} < ${self.cfg.min_edge})"
+            if edge_dollars < self.cfg.min_edge:
+                return False, f"Edge too small (${edge_dollars:.3f} < ${self.cfg.min_edge})"
 
-        return True, "ok"
+            # Reserve the exposure immediately so concurrent threads see it
+            self.open_positions[ticker] = existing_contracts + contracts
+            return True, "ok"
 
     def kelly_contracts(
         self,
@@ -117,17 +122,31 @@ class RiskManager:
         return max(0, min(contracts, max_contracts))
 
     def record_open(self, ticker: str, contracts: int):
-        self.open_positions[ticker] = self.open_positions.get(ticker, 0) + contracts
-        save_state(self.open_positions)
+        # approve_trade already reserved these contracts in open_positions.
+        # This call just persists the state to disk.
+        with self._lock:
+            save_state(self.open_positions)
+
+    def undo_reservation(self, ticker: str, contracts: int):
+        """Call when order placement fails after approve_trade returned True."""
+        with self._lock:
+            existing = self.open_positions.get(ticker, 0)
+            remaining = existing - contracts
+            if remaining <= 0:
+                self.open_positions.pop(ticker, None)
+            else:
+                self.open_positions[ticker] = remaining
+            save_state(self.open_positions)
 
     def record_close(self, ticker: str, contracts: int):
-        existing = self.open_positions.get(ticker, 0)
-        remaining = existing - contracts
-        if remaining <= 0:
-            self.open_positions.pop(ticker, None)
-        else:
-            self.open_positions[ticker] = remaining
-        save_state(self.open_positions)
+        with self._lock:
+            existing = self.open_positions.get(ticker, 0)
+            remaining = existing - contracts
+            if remaining <= 0:
+                self.open_positions.pop(ticker, None)
+            else:
+                self.open_positions[ticker] = remaining
+            save_state(self.open_positions)
 
     def status(self) -> dict:
         self._reset_day_if_needed()

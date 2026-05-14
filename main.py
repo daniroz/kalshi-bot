@@ -174,6 +174,14 @@ def main_loop(kalshi, poly, risk):
     news    = NewsStrategy(kalshi, risk)
     cal     = CalendarStrategy(kalshi, risk)
 
+    # On restart, block re-entry into any ticker risk manager already holds.
+    # Strategies use _last_entry to enforce per-ticker cooldowns.
+    _now = time.time()
+    for _ticker in risk.open_positions:
+        for _strat in (arb, mis, weather, ob, intra, sports, crypto, news, cal):
+            if hasattr(_strat, "_last_entry"):
+                _strat._last_entry.setdefault(_ticker, _now)
+
     use_arb     = os.getenv("STRATEGY_ARBITRAGE",     "true").lower() == "true"
     use_mm      = os.getenv("STRATEGY_MARKET_MAKER",  "true").lower() == "true"
     use_mis     = os.getenv("STRATEGY_MISPRICING",    "true").lower() == "true"
@@ -189,10 +197,18 @@ def main_loop(kalshi, poly, risk):
 
     cycle = 0
     LOOP_INTERVAL      = 15  # seconds between cycles
-    BALANCE_SYNC_EVERY = 4   # sync balance every ~60s
+    BALANCE_SYNC_EVERY = 1   # sync balance every cycle (~15s) — critical for accurate 5% sizing
     STATUS_EVERY       = 2   # print status every ~30s
 
     log.info("Bot started. Press Ctrl-C to stop cleanly.")
+
+    # Sync real balance before first cycle so position sizing uses actual funds
+    try:
+        bal = kalshi.get_balance()
+        risk.update_balance(float(bal.get("balance", 0)))
+        log.info(f"Balance synced: ${risk.balance:.2f}")
+    except Exception as e:
+        log.warning(f"Initial balance sync failed: {e}")
 
     try:
         while True:

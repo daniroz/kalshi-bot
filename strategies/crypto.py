@@ -268,4 +268,5 @@ class CryptoStrategy:
             return True
         except Exception as e:
             log.error(f"[crypto] Order failed {ticker}: {e}")
+            self.risk.undo_reservation(ticker, contracts)
             return False

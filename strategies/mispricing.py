@@ -18,11 +18,15 @@ from utils.markets import get_liquid_markets
 from utils.logger import log
 
 
+COOLDOWN_S = 600  # 10 min between re-entries per ticker
+
+
 class MispricingStrategy:
     def __init__(self, kalshi: KalshiClient, risk: RiskManager, min_edge: float = 0.03):
         self.kalshi = kalshi
         self.risk = risk
         self.min_edge = min_edge
+        self._last_entry: dict[str, float] = {}
 
     def scan(self) -> list[dict]:
         markets = get_liquid_markets(self.kalshi, min_volume=0)
@@ -30,7 +34,12 @@ class MispricingStrategy:
         opps = []
         now = time.time()
 
+        now = time.time()
         for m in markets:
+            ticker = m["ticker"]
+            if now - self._last_entry.get(ticker, 0) < COOLDOWN_S:
+                continue
+
             yes_ask = float(m.get("yes_ask_dollars") or 0)
             yes_bid = float(m.get("yes_bid_dollars") or 0)
             no_ask  = float(m.get("no_ask_dollars")  or 0)
@@ -122,7 +131,10 @@ class MispricingStrategy:
 
         if placed:
             self.risk.record_open(ticker, contracts)
+            self._last_entry[ticker] = time.time()
             log.info(f"[mis] Internal arb {ticker}  yes={yes_c}¢ no={no_c}¢ x{contracts}  edge={edge*100:.1f}¢")
+        else:
+            self.risk.undo_reservation(ticker, contracts)
         return placed > 0
 
     def _execute_near_expiry(self, opp: dict) -> bool:
@@ -145,8 +157,10 @@ class MispricingStrategy:
                 no_price=price_c  if side == "no"  else None,
             )
             self.risk.record_open(ticker, contracts)
+            self._last_entry[ticker] = time.time()
             log.info(f"[mis] Near-expiry {ticker} {side.upper()} x{contracts} @ {price_c}¢  {opp['secs_left']}s left")
             return True
         except Exception as e:
             log.error(f"[mis] Near-expiry order failed {ticker}: {e}")
+            self.risk.undo_reservation(ticker, contracts)
             return False

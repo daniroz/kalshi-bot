@@ -9,16 +9,22 @@ no directional bets. Pure locked-in arb only.
 """
 
 import time
+from dataclasses import dataclass
 from clients.kalshi import KalshiClient
 from risk.manager import RiskManager
 from utils.markets import get_liquid_markets
 from utils.logger import log
 
 
-MIN_TOTAL_DEPTH     = 0
-IMBALANCE_THRESHOLD = 2.0
-COOLDOWN_S          = 120
-MIN_ARB_EDGE        = 0.04  # only fire if guaranteed profit >= 4 cents per contract
+COOLDOWN_S   = 3600   # 1 hour — once we arb a ticker, don't re-enter same day
+MIN_ARB_EDGE = 0.04   # only fire if guaranteed profit >= 4 cents per contract
+
+
+@dataclass
+class ArbPosition:
+    ticker: str
+    contracts: int
+    entered_ts: float
 
 
 class OrderbookStrategy:
@@ -26,14 +32,34 @@ class OrderbookStrategy:
         self.kalshi = kalshi
         self.risk = risk
         self._last_entry: dict[str, float] = {}
-        self._prev_imbalance: dict[str, float] = {}
+        self._positions:  dict[str, ArbPosition] = {}
+
+    def _check_exits(self):
+        """Close out positions when the market has finalized."""
+        for ticker, pos in list(self._positions.items()):
+            try:
+                m = self.kalshi.get_market(ticker).get("market", {})
+                status = m.get("status", "")
+                if status in ("finalized", "settled"):
+                    self.risk.record_close(ticker, pos.contracts)
+                    log.info(f"[ob] ARB settled {ticker} x{pos.contracts}")
+                    self._positions.pop(ticker, None)
+                # Also clean up positions older than 7 days (market must have settled)
+                elif time.time() - pos.entered_ts > 7 * 86400:
+                    self.risk.record_close(ticker, pos.contracts)
+                    self._positions.pop(ticker, None)
+            except Exception as e:
+                log.debug(f"[ob] exit check {ticker}: {e}")
 
     def scan(self) -> list[dict]:
+        self._check_exits()
         markets = get_liquid_markets(self.kalshi, min_volume=50)
         signals = []
 
         for m in markets:
             ticker = m["ticker"]
+            if ticker in self._positions:
+                continue
             if time.time() - self._last_entry.get(ticker, 0) < COOLDOWN_S:
                 continue
 
@@ -48,49 +74,17 @@ class OrderbookStrategy:
 
             if edge >= MIN_ARB_EDGE:
                 signals.append({
-                    "ticker": ticker, "title": m.get("title", "")[:60],
-                    "type": "arb", "side": "both",
-                    "price_c": yes_ask_c, "no_price_c": no_ask_c,
-                    "edge": edge, "yes_qty": 0, "no_qty": 0,
-                    "ratio": 1.0, "strengthening": True,
+                    "ticker":    ticker,
+                    "title":     m.get("title", "")[:60],
+                    "price_c":   yes_ask_c,
+                    "no_price_c": no_ask_c,
+                    "edge":      edge,
                 })
 
         signals.sort(key=lambda x: x["edge"], reverse=True)
         return signals
 
     def execute(self, signal: dict) -> bool:
-        if signal["type"] == "arb":
-            return self._execute_arb(signal)
-
-        ticker  = signal["ticker"]
-        side    = signal["side"]
-        price_c = signal["price_c"]
-        edge    = signal["edge"]
-
-        contracts = self.risk.kelly_contracts(price_c, price_c / 100 + edge, max_contracts=50)
-        contracts = max(1, contracts)
-
-        ok, reason = self.risk.approve_trade(ticker, price_c, contracts, edge * contracts)
-        if not ok:
-            log.info(f"[ob] Skipped {ticker}: {reason}")
-            return False
-
-        try:
-            self.kalshi.place_order(
-                ticker=ticker, side=side, action="buy",
-                count=contracts, order_type="limit",
-                yes_price=price_c if side == "yes" else None,
-                no_price=price_c  if side == "no"  else None,
-            )
-            self.risk.record_open(ticker, contracts)
-            self._last_entry[ticker] = time.time()
-            log.info(f"[ob] {signal['type'].upper()} {ticker} {side.upper()} x{contracts} @ {price_c}c  edge={edge*100:.1f}c")
-            return True
-        except Exception as e:
-            log.error(f"[ob] Order failed {ticker}: {e}")
-            return False
-
-    def _execute_arb(self, signal: dict) -> bool:
         ticker    = signal["ticker"]
         yes_c     = signal["price_c"]
         no_c      = signal["no_price_c"]
@@ -99,7 +93,7 @@ class OrderbookStrategy:
 
         ok, reason = self.risk.approve_trade(ticker, yes_c, contracts, edge * contracts)
         if not ok:
-            log.info(f"[ob] Skipped arb {ticker}: {reason}")
+            log.info(f"[ob] Skipped {ticker}: {reason}")
             return False
 
         placed = 0
@@ -113,10 +107,15 @@ class OrderbookStrategy:
                 )
                 placed += 1
             except Exception as e:
-                log.error(f"[ob] {side} arb leg failed {ticker}: {e}")
+                log.error(f"[ob] {side} leg failed {ticker}: {e}")
 
         if placed:
             self.risk.record_open(ticker, contracts)
             self._last_entry[ticker] = time.time()
+            self._positions[ticker] = ArbPosition(
+                ticker=ticker, contracts=contracts, entered_ts=time.time()
+            )
             log.info(f"[ob] ARB {ticker} both x{contracts}  yes={yes_c}c no={no_c}c  edge={edge*100:.1f}c")
+        else:
+            self.risk.undo_reservation(ticker, contracts)
         return placed > 0
