@@ -122,13 +122,22 @@ class IntradayStrategy:
                 self._exit(pos, f"trailing stop (peak={pos.high_water_c}¢ now={current_c}¢)")
 
     def _exit(self, pos: IntradayPosition, reason: str):
+        # Kalshi rejects market orders — limit at current bid for our side fills immediately.
         try:
+            m = self.kalshi.get_market(pos.ticker).get("market", {})
+            if pos.side == "yes":
+                bid_c = int(round(float(m.get("yes_bid_dollars") or 0) * 100))
+            else:
+                bid_c = int(round(float(m.get("no_bid_dollars")  or 0) * 100))
+            bid_c = max(1, min(99, bid_c))
             self.kalshi.place_order(
                 ticker=pos.ticker, side=pos.side, action="sell",
-                count=pos.contracts, order_type="market",
+                count=pos.contracts, order_type="limit",
+                yes_price=bid_c if pos.side == "yes" else None,
+                no_price =bid_c if pos.side == "no"  else None,
             )
             self.risk.record_close(pos.ticker, pos.contracts)
-            log.info(f"[intra] EXIT {pos.ticker} {pos.side.upper()} x{pos.contracts}  {reason}")
+            log.info(f"[intra] EXIT {pos.ticker} {pos.side.upper()} x{pos.contracts} @ {bid_c}¢  {reason}")
         except Exception as e:
             log.error(f"[intra] Exit failed {pos.ticker}: {e}")
         finally:

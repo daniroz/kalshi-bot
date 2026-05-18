@@ -168,17 +168,18 @@ class SportsStrategy:
         self._markets_ts = time.time()
 
     def _parse_ticker_teams(self, ticker: str):
-        # KXNBAGAME-26MAY15DETCLE-DET -> teams=DETCLE, side=DET
+        # KXNBAGAME-26MAY15DETCLE-DET -> teams=DETCLE, side=DET, date='26MAY15'
         parts = ticker.split("-")
         if len(parts) < 3:
-            return None, None
+            return None, None, None
         team_part = parts[-1]          # DET or CLE
         game_part = parts[-2]          # 26MAY15DETCLE
         # Strip date prefix (digits + month + digits)
-        m = re.search(r'\d{2}[A-Z]{3}\d{2}([A-Z]+)', game_part)
+        m = re.match(r'(\d{2}[A-Z]{3}\d{2})([A-Z]+)', game_part)
         if not m:
-            return None, None
-        teams_str = m.group(1)         # DETCLE
+            return None, None, None
+        date_str  = m.group(1)         # 26MAY15
+        teams_str = m.group(2)         # DETCLE
         # Split: try 3+3 or 2+3 or 3+2
         if len(teams_str) == 6:
             t0, t1 = teams_str[:3], teams_str[3:]
@@ -191,8 +192,16 @@ class SportsStrategy:
                 t1 = team_part
                 t0 = teams_str[:-len(team_part)]
         else:
-            return None, None
-        return (t0, t1), team_part
+            return None, None, None
+        return (t0, t1), team_part, date_str
+
+    @staticmethod
+    def _today_kalshi_date() -> str:
+        """Today's date in Kalshi ticker format, e.g. '26MAY18'."""
+        from datetime import datetime, timezone
+        d = datetime.now(timezone.utc)
+        months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]
+        return f"{d.year%100:02d}{months[d.month-1]}{d.day:02d}"
 
     def _win_prob(self, game: dict, team_abbr: str) -> float:
         sport    = game["sport"]
@@ -236,13 +245,22 @@ class SportsStrategy:
                 log.warning(f"[sports] Exit check {ticker}: {e}")
 
     def _exit(self, pos: SportsPosition, reason: str):
+        # Kalshi rejects market orders — limit at current bid for our side fills immediately.
         try:
+            m = self.kalshi.get_market(pos.ticker).get("market", {})
+            if pos.side == "yes":
+                bid_c = int(round(float(m.get("yes_bid_dollars") or 0) * 100))
+            else:
+                bid_c = int(round(float(m.get("no_bid_dollars")  or 0) * 100))
+            bid_c = max(1, min(99, bid_c))
             self.kalshi.place_order(
                 ticker=pos.ticker, side=pos.side, action="sell",
-                count=pos.contracts, order_type="market",
+                count=pos.contracts, order_type="limit",
+                yes_price=bid_c if pos.side == "yes" else None,
+                no_price =bid_c if pos.side == "no"  else None,
             )
             self.risk.record_close(pos.ticker, pos.contracts)
-            log.info(f"[sports] EXIT {pos.ticker} {pos.side.upper()} x{pos.contracts}  {reason}")
+            log.info(f"[sports] EXIT {pos.ticker} {pos.side.upper()} x{pos.contracts} @ {bid_c}¢  {reason}")
         except Exception as e:
             log.error(f"[sports] Exit failed {pos.ticker}: {e}")
         finally:
@@ -266,8 +284,15 @@ class SportsStrategy:
             if now - self._last_entry.get(ticker, 0) < COOLDOWN_S:
                 continue
 
-            teams, team_abbr = self._parse_ticker_teams(ticker)
+            teams, team_abbr, ticker_date = self._parse_ticker_teams(ticker)
             if not teams or not team_abbr:
+                continue
+
+            # CRITICAL: only trade tickers for games happening TODAY. The live ESPN
+            # data is only meaningful for the in-progress game; applying it to a
+            # future-dated game in the same series (e.g. Game 4 while Game 2 is
+            # live) is a model error that already cost us real money.
+            if ticker_date != self._today_kalshi_date():
                 continue
 
             t0, t1 = teams
@@ -298,7 +323,6 @@ class SportsStrategy:
                 })
             # Model says lower than Kalshi bid → buy NO
             elif yes_bid_c - model_c >= int(MIN_EDGE * 100) and no_ask_c > 0:
-                edge = ((100 - yes_bid_c) / 100 - no_ask_c / 100) + (1 - win_prob - no_ask_c / 100)
                 edge = (1 - win_prob) - no_ask_c / 100
                 signals.append({
                     "ticker":    ticker, "title": m.get("title","")[:60],
@@ -307,7 +331,17 @@ class SportsStrategy:
                     "game":      f"{game['abbr0']} {game['score0']}-{game['score1']} {game['abbr1']}  {game['mins_rem']:.0f}min",
                 })
 
-        signals.sort(key=lambda x: (x["volume"], abs(x["edge"])), reverse=True)
+        # Only take the single best signal per game — never enter both sides
+        # of the same matchup (one would always cancel the other out).
+        best_per_game: dict[str, dict] = {}
+        for sig in signals:
+            teams, _, _ = self._parse_ticker_teams(sig["ticker"])
+            game_key = "".join(sorted(teams)) if teams else sig["ticker"]
+            existing = best_per_game.get(game_key)
+            if existing is None or abs(sig["edge"]) > abs(existing["edge"]):
+                best_per_game[game_key] = sig
+
+        signals = sorted(best_per_game.values(), key=lambda x: (x["volume"], abs(x["edge"])), reverse=True)
         return signals
 
     def execute(self, signal: dict) -> bool:

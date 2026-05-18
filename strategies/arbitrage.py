@@ -1,12 +1,16 @@
 """
-Cross-market arbitrage: Kalshi vs Polymarket.
+Cross-market SIGNAL strategy (NOT true arbitrage — we only place the Kalshi leg).
 
-Logic: find Kalshi markets whose YES price differs from the
-equivalent Polymarket market by more than the fee + min_edge.
-Kalshi fee: ~3% of winnings. Polymarket fee: ~2%.
+Honest framing: we use Polymarket prices as an external signal for Kalshi mispricing.
+If Polymarket says YES is 40¢ and Kalshi says 25¢, we buy Kalshi YES — but we are
+UNHEDGED. We're taking directional exposure on the assumption that Polymarket's
+broader liquidity makes its price closer to truth. This carries model risk:
+  1. The matched markets may resolve differently (different rules / scope)
+  2. Polymarket could be wrong
+  3. We pay only Kalshi's ~3% fee (no Polymarket leg)
 
-If Kalshi YES < Polymarket YES by enough → buy YES on Kalshi.
-If Kalshi YES > Polymarket YES by enough → buy NO on Kalshi (equivalent to shorting YES).
+Defense in depth: stricter title match (0.50 cosine, was 0.25), require 8¢ edge.
+Even with this, expect ~25-30% loss rate from match errors. Position-size accordingly.
 """
 
 import re
@@ -22,9 +26,14 @@ from utils.fill_tracker import FillTracker
 from utils.logger import log
 
 
-KALSHI_FEE = 0.03
-POLY_FEE   = 0.02
-TOTAL_FEE  = KALSHI_FEE + POLY_FEE - 0.01
+# Fee math: we only place the Kalshi leg, so only Kalshi fees apply.
+# Kalshi fee is volume-based not flat 3%; computed per-trade in approve_trade.
+# We use 3% as a conservative average for the edge calculation here.
+KALSHI_FEE_AVG = 0.03
+
+# Stricter title matching — 0.25 cosine was matching different markets that
+# shared similar tokens. 0.50 is much stricter.
+MATCH_THRESHOLD = 0.50
 
 
 STOPWORDS = {"the","a","an","is","in","of","to","and","or","will","by","on",
@@ -94,7 +103,7 @@ class ArbitrageStrategy:
     def _find_poly_match(self, kalshi_title: str) -> Optional[dict]:
         if not self._poly_cache:
             return None
-        best, best_score = None, 0.25   # min threshold (higher = stricter)
+        best, best_score = None, MATCH_THRESHOLD
         k_nums = _extract_numbers(kalshi_title)
         for m in self._poly_cache:
             q = m.get("question", "")
@@ -139,10 +148,9 @@ class ArbitrageStrategy:
                 continue
 
             # Edge: how much cheaper is Kalshi YES vs Polymarket YES?
-            # Buy YES on Kalshi, implicitly hold equivalent on Polymarket
-            edge_buy_yes = p_yes - k_yes_ask - TOTAL_FEE
-            # Edge: buy NO on Kalshi (= short YES), Polymarket says YES is overpriced
-            edge_buy_no  = k_yes_bid - p_yes - TOTAL_FEE
+            # Only Kalshi fee applies — we're not hedging on Polymarket.
+            edge_buy_yes = p_yes - k_yes_ask - KALSHI_FEE_AVG
+            edge_buy_no  = k_yes_bid - p_yes - KALSHI_FEE_AVG
 
             if edge_buy_yes > self.min_edge:
                 opps.append({

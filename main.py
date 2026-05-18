@@ -40,6 +40,8 @@ from strategies.sports import SportsStrategy
 from strategies.crypto import CryptoStrategy
 from strategies.news import NewsStrategy
 from strategies.calendar import CalendarStrategy
+from strategies.settlement import SettlementStrategy
+from coach import Coach
 from utils.logger import log, console
 from utils.alerts import alert_trade, alert_error, alert_balance, alert_halt
 
@@ -61,7 +63,7 @@ def build_risk() -> RiskManager:
         max_position_scale_pct = float(os.getenv("MAX_POSITION_SCALE_PCT", 0.12)),
         max_daily_loss_pct     = float(os.getenv("MAX_DAILY_LOSS_PCT", 1.0)),
         max_open_positions     = int(os.getenv("MAX_OPEN_POSITIONS", 999)),
-        min_edge               = float(os.getenv("MIN_EDGE_THRESHOLD", 0.01)),
+        min_edge               = float(os.getenv("MIN_EDGE_THRESHOLD", 0.02)),
     )
     return RiskManager(cfg)
 
@@ -159,11 +161,14 @@ def scan_mode(kalshi, poly, risk):
 
 
 def main_loop(kalshi, poly, risk):
+    coach   = Coach(kalshi, risk)
+    # Arbitrage min_edge raised to 8¢ — title matching has model risk; need fat margin.
     arb     = ArbitrageStrategy(kalshi, poly, risk,
-                                min_edge=float(os.getenv("MIN_EDGE_THRESHOLD", 0.04)))
+                                min_edge=float(os.getenv("ARB_MIN_EDGE", 0.08)))
     mm      = MarketMakerStrategy(kalshi, risk)
+    # Mispricing internal-arb pays fees on BOTH legs; needs to beat 4¢+ of fees.
     mis     = MispricingStrategy(kalshi, risk,
-                                 min_edge=float(os.getenv("MIN_EDGE_THRESHOLD", 0.03)))
+                                 min_edge=float(os.getenv("MIS_MIN_EDGE", 0.06)))
     smart   = SmartMoneyStrategy(kalshi, risk)
     weather = WeatherStrategy(kalshi, risk)
     ob      = OrderbookStrategy(kalshi, risk)
@@ -173,6 +178,7 @@ def main_loop(kalshi, poly, risk):
     crypto  = CryptoStrategy(kalshi, risk)
     news    = NewsStrategy(kalshi, risk)
     cal     = CalendarStrategy(kalshi, risk)
+    settle  = SettlementStrategy(kalshi, risk)
 
     # On restart, block re-entry into any ticker risk manager already holds.
     # Strategies use _last_entry to enforce per-ticker cooldowns.
@@ -182,18 +188,19 @@ def main_loop(kalshi, poly, risk):
             if hasattr(_strat, "_last_entry"):
                 _strat._last_entry.setdefault(_ticker, _now)
 
-    use_arb     = os.getenv("STRATEGY_ARBITRAGE",     "true").lower() == "true"
-    use_mm      = os.getenv("STRATEGY_MARKET_MAKER",  "true").lower() == "true"
-    use_mis     = os.getenv("STRATEGY_MISPRICING",    "true").lower() == "true"
-    use_smart   = os.getenv("STRATEGY_SMART_MONEY",   "true").lower() == "true"
-    use_weather = os.getenv("STRATEGY_WEATHER",       "true").lower() == "true"
-    use_ob      = os.getenv("STRATEGY_ORDERBOOK",     "true").lower() == "true"
-    use_mom     = os.getenv("STRATEGY_MOMENTUM",      "true").lower() == "true"
-    use_intra   = os.getenv("STRATEGY_INTRADAY",      "true").lower() == "true"
-    use_sports  = os.getenv("STRATEGY_SPORTS",        "true").lower() == "true"
-    use_crypto  = os.getenv("STRATEGY_CRYPTO",        "true").lower() == "true"
-    use_news    = os.getenv("STRATEGY_NEWS",          "true").lower() == "true"
-    use_cal     = os.getenv("STRATEGY_CALENDAR",      "true").lower() == "true"
+    use_arb      = os.getenv("STRATEGY_ARBITRAGE",     "true").lower() == "true"
+    use_mm       = os.getenv("STRATEGY_MARKET_MAKER",  "true").lower() == "true"
+    use_mis      = os.getenv("STRATEGY_MISPRICING",    "true").lower() == "true"
+    use_smart    = os.getenv("STRATEGY_SMART_MONEY",   "true").lower() == "true"
+    use_weather  = os.getenv("STRATEGY_WEATHER",       "true").lower() == "true"
+    use_ob       = os.getenv("STRATEGY_ORDERBOOK",     "true").lower() == "true"
+    use_mom      = os.getenv("STRATEGY_MOMENTUM",      "true").lower() == "true"
+    use_intra    = os.getenv("STRATEGY_INTRADAY",      "true").lower() == "true"
+    use_sports   = os.getenv("STRATEGY_SPORTS",        "true").lower() == "true"
+    use_crypto   = os.getenv("STRATEGY_CRYPTO",        "true").lower() == "true"
+    use_news     = os.getenv("STRATEGY_NEWS",          "true").lower() == "true"
+    use_cal      = os.getenv("STRATEGY_CALENDAR",      "true").lower() == "true"
+    use_settle   = os.getenv("STRATEGY_SETTLEMENT",    "true").lower() == "true"
 
     cycle = 0
     LOOP_INTERVAL      = 15  # seconds between cycles
@@ -202,11 +209,14 @@ def main_loop(kalshi, poly, risk):
 
     log.info("Bot started. Press Ctrl-C to stop cleanly.")
 
-    # Sync real balance before first cycle so position sizing uses actual funds
+    # Sync real balance before first cycle so position sizing uses actual funds.
+    # Total portfolio value = cash balance + open position value (portfolio_value is in cents).
     try:
         bal = kalshi.get_balance()
-        risk.update_balance(float(bal.get("balance", 0)))
-        log.info(f"Balance synced: ${risk.balance:.2f}")
+        cash = float(bal.get("balance", 0))
+        pos_value = float(bal.get("portfolio_value", 0)) / 100
+        risk.update_balance(cash + pos_value)
+        log.info(f"Balance synced: ${risk.balance:.2f} (cash=${cash:.2f} + positions=${pos_value:.2f})")
     except Exception as e:
         log.warning(f"Initial balance sync failed: {e}")
 
@@ -217,15 +227,25 @@ def main_loop(kalshi, poly, risk):
             if cycle % BALANCE_SYNC_EVERY == 0:
                 try:
                     bal = kalshi.get_balance()
-                    dollars = bal.get("balance", 0)
-                    prev_bal = risk.balance
-                    risk.update_balance(dollars)
+                    cash = float(bal.get("balance", 0))
+                    pos_value = float(bal.get("portfolio_value", 0)) / 100
+                    total = cash + pos_value
+                    risk.update_balance(total)
                     # Send balance alert every 30 min
                     if cycle % 120 == 0:
                         starting = float(os.getenv("STARTING_BALANCE", 250))
-                        alert_balance(dollars, dollars - starting, (dollars - starting) / starting * 100)
+                        alert_balance(total, total - starting, (total - starting) / starting * 100)
                 except Exception as e:
                     log.warning(f"Balance sync failed: {e}")
+
+            # Sync open_positions with actual Kalshi position_fp every cycle.
+            # This is the ground-truth guard: prevents the market maker from
+            # accumulating large positions by re-quoting while the internal
+            # reservation counter resets each cycle.
+            risk.sync_positions(kalshi)
+
+            # Coach: enforce limits, adjust edge, report performance
+            coach.tick()
 
             if cycle % STATUS_EVERY == 0:
                 print_status(risk, cycle)
@@ -247,7 +267,7 @@ def main_loop(kalshi, poly, risk):
 
             def run_weather():
                 if use_weather:
-                    for opp in weather.scan()[:5]:
+                    for opp in weather.scan()[:15]:
                         weather.execute(opp)
 
             def run_mis():
@@ -299,11 +319,16 @@ def main_loop(kalshi, poly, risk):
                     for opp in cal.scan()[:5]:
                         cal.execute(opp)
 
-            with ThreadPoolExecutor(max_workers=12) as ex:
+            def run_settle():
+                if use_settle:
+                    for opp in settle.scan()[:10]:
+                        settle.execute(opp)
+
+            with ThreadPoolExecutor(max_workers=13) as ex:
                 futures = [ex.submit(f) for f in (
                     run_smart, run_weather, run_mis, run_arb, run_mm,
                     run_ob, run_mom, run_intra, run_sports, run_crypto,
-                    run_news, run_cal,
+                    run_news, run_cal, run_settle,
                 )]
                 for f in as_completed(futures):
                     try:

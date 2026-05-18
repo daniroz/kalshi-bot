@@ -1,5 +1,7 @@
 """Kalshi REST API client — uses official SDK auth."""
 
+import time
+import threading
 import httpx
 import kalshi_python
 from kalshi_python.api_client import ApiClient as _SdkClient
@@ -7,6 +9,9 @@ from kalshi_python.api_client import ApiClient as _SdkClient
 
 PROD_URL = "https://external-api.kalshi.com/trade-api/v2"
 DEMO_URL = "https://external-api.demo.kalshi.co/trade-api/v2"
+
+_MAX_RETRIES = 4
+_BASE_BACKOFF = 1.0  # seconds
 
 
 class KalshiClient:
@@ -23,6 +28,8 @@ class KalshiClient:
             timeout=10.0,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
+        # Limit concurrent in-flight requests to avoid burst 429s
+        self._sem = threading.Semaphore(4)
 
     def _headers(self, method: str, path: str) -> dict:
         full_url = self.base_url + path
@@ -30,23 +37,34 @@ class KalshiClient:
         hdrs["Content-Type"] = "application/json"
         return hdrs
 
+    def _request(self, fn, *args, **kwargs):
+        """Execute fn with retry/backoff on 429 and 5xx."""
+        with self._sem:
+            for attempt in range(_MAX_RETRIES):
+                r = fn(*args, **kwargs)
+                if r.status_code == 429:
+                    retry_after = float(r.headers.get("Retry-After", _BASE_BACKOFF * (2 ** attempt)))
+                    time.sleep(min(retry_after, 30))
+                    continue
+                if r.status_code >= 500 and attempt < _MAX_RETRIES - 1:
+                    time.sleep(_BASE_BACKOFF * (2 ** attempt))
+                    continue
+                r.raise_for_status()
+                return r.json()
+            r.raise_for_status()
+            return r.json()
+
     def _get(self, path: str, params: dict = None):
         hdrs = self._headers("GET", path)
-        r = self._client.get(self.base_url + path, headers=hdrs, params=params)
-        r.raise_for_status()
-        return r.json()
+        return self._request(self._client.get, self.base_url + path, headers=hdrs, params=params)
 
     def _post(self, path: str, body: dict):
         hdrs = self._headers("POST", path)
-        r = self._client.post(self.base_url + path, headers=hdrs, json=body)
-        r.raise_for_status()
-        return r.json()
+        return self._request(self._client.post, self.base_url + path, headers=hdrs, json=body)
 
     def _delete(self, path: str):
         hdrs = self._headers("DELETE", path)
-        r = self._client.delete(self.base_url + path, headers=hdrs)
-        r.raise_for_status()
-        return r.json()
+        return self._request(self._client.delete, self.base_url + path, headers=hdrs)
 
     # ── Market data ──────────────────────────────────────────────────────────
 

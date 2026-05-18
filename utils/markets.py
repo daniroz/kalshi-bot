@@ -26,13 +26,10 @@ LIQUID_SERIES = [
     "KXGOLD",
     # Politics
     "KXTRUMPPOLLDAILY",
-    # Sports — game winners (high volume, 24/7)
+    # Sports — individual game winners only (no season-level markets)
     "KXNBAGAME",
     "KXNHLGAME",
     "KXMLBGAME",
-    "KXNBA",
-    "KXNHL",
-    "KXMLB",
 ]
 
 _cache: list[dict] = []
