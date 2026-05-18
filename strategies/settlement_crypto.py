@@ -40,12 +40,15 @@ from utils.logger import log
 # ── Tunables ───────────────────────────────────────────────────────────────────
 SCAN_INTERVAL_S      = 30           # tight — crypto moves
 MIN_EDGE_C           = 10           # 10¢ per contract minimum AFTER fees
-MIN_TRADE_DOLLARS    = 20.0
-MAX_TRADE_DOLLARS    = 40.0
-MAX_PRICE_C          = 92           # don't pay >92¢ even verified
+MIN_TRADE_DOLLARS    = 5.0          # honors global risk-manager floor
+MAX_TRADE_DOLLARS    = 35.0
+MAX_PRICE_C          = 89           # ≥10¢ edge requirement → 90+ unreachable; matches math
 RESOLVE_MIN_S        = 60           # need ≥1 min — slippage cushion
 RESOLVE_MAX_S        = 90 * 60      # 90 min out, spot drift is too risky
 PRICE_CACHE_TTL_S    = 5            # refresh spot every 5s
+# Absolute-dollar safety floor — % margins can be tiny for cheap assets.
+# E.g. ETH at $2,100 × 0.2% = $4.20, easily wiped by a normal tick.
+ABS_MARGIN_FLOOR_USD = 10.0
 
 
 # Pair currently tradeable on Kalshi (extend as new series appear)
@@ -177,7 +180,12 @@ class CryptoSettlementStrategy:
             return None
 
         threshold = parsed["threshold"]
-        margin_required = threshold * _safety_margin_pct(seconds_left)
+        # Take MAX of % margin and absolute dollar floor — protects against
+        # cheap-asset cases where % margin is tiny in dollar terms.
+        margin_required = max(
+            threshold * _safety_margin_pct(seconds_left),
+            ABS_MARGIN_FLOOR_USD,
+        )
 
         yes_ask_c = int(round(float(m.get("yes_ask_dollars") or 0) * 100))
         no_ask_c  = int(round(float(m.get("no_ask_dollars")  or 0) * 100))
@@ -248,10 +256,14 @@ class CryptoSettlementStrategy:
         price_c = opp["price_c"]
         edge_c  = opp["edge_c"]
 
+        # Tier-aware sizing: target min(MAX_TRADE_DOLLARS, tier-adjusted cap).
         price = price_c / 100
-        contracts = int(MAX_TRADE_DOLLARS / price)
-        if contracts * price < MIN_TRADE_DOLLARS:
-            contracts = max(contracts, int(MIN_TRADE_DOLLARS / price) + 1)
+        tier_cap_dollars = self.risk.balance * self.risk.effective_max_position_pct()
+        target_dollars = min(MAX_TRADE_DOLLARS, tier_cap_dollars)
+        if target_dollars < MIN_TRADE_DOLLARS:
+            log.info(f"[settle-crypto] Skip {ticker}: tier cap ${tier_cap_dollars:.2f} below floor ${MIN_TRADE_DOLLARS}")
+            return False
+        contracts = int(target_dollars / price)
         if contracts <= 0:
             return False
 

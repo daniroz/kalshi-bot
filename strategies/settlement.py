@@ -53,11 +53,12 @@ from strategies.weather import SERIES, _parse_ticker, _hours_until_resolution
 RESOLVE_WINDOW_MIN_H = 0.5       # don't bother less than 30 min from settle (slippage)
 RESOLVE_WINDOW_MAX_H = 8.0       # past 8h out, observed data isn't yet decisive
 MIN_EDGE_C           = 10        # 10¢ per contract minimum edge AFTER fees
-MIN_TRADE_DOLLARS    = 20.0
+MIN_TRADE_DOLLARS    = 5.0       # honors global risk-manager floor
 MAX_TRADE_DOLLARS    = 35.0      # cap any single bet; this is concentrated risk
-MAX_PRICE_C          = 90        # don't pay >90¢ even when verified — limited upside
+MAX_PRICE_C          = 89        # ≥10¢ edge requirement makes 90+ unreachable; matches math
 SCAN_INTERVAL_S      = 60        # tight loop — observed data updates hourly
 OBS_CACHE_TTL_S      = 600       # re-fetch observations every 10 min
+TEMP_MARGIN_F        = 2.0       # require 2°F buffer (was 1°F — Open-Meteo vs station mismatch)
 
 
 @dataclass
@@ -181,15 +182,15 @@ class SettlementStrategy:
         if kind == "high":
             obs_max = obs["observed_max"] or -999
             forecast_remaining_max = obs["forecast_max"] or obs_max
-            # YES is locked: observed max already exceeds threshold by ≥1°F
-            if obs_max >= threshold_f + 1.0 and yes_ask_c <= MAX_PRICE_C:
+            # YES is locked: observed max already exceeds threshold by ≥TEMP_MARGIN_F
+            if obs_max >= threshold_f + TEMP_MARGIN_F and yes_ask_c <= MAX_PRICE_C:
                 side, price_c, observed_temp = "yes", yes_ask_c, obs_max
-                reason = f"observed_max={obs_max:.1f}°F ≥ threshold={threshold_f}°F + 1"
+                reason = f"observed_max={obs_max:.1f}°F ≥ threshold={threshold_f}°F + {TEMP_MARGIN_F}"
             # NO is locked: both observed and rest-of-day forecast won't reach threshold
-            elif (max(obs_max, forecast_remaining_max) < threshold_f - 2.0
+            elif (max(obs_max, forecast_remaining_max) < threshold_f - TEMP_MARGIN_F
                   and no_ask_c <= MAX_PRICE_C):
                 side, price_c, observed_temp = "no", no_ask_c, max(obs_max, forecast_remaining_max)
-                reason = f"max(obs,fcst)={max(obs_max, forecast_remaining_max):.1f}°F < threshold={threshold_f}°F - 2"
+                reason = f"max(obs,fcst)={max(obs_max, forecast_remaining_max):.1f}°F < threshold={threshold_f}°F - {TEMP_MARGIN_F}"
 
         else:   # low
             obs_min = obs["observed_min"]
@@ -198,15 +199,15 @@ class SettlementStrategy:
                 return None
             if forecast_remaining_min is None:
                 forecast_remaining_min = obs_min
-            # YES locked: observed min already below threshold by ≥1°F
-            if obs_min <= threshold_f - 1.0 and yes_ask_c <= MAX_PRICE_C:
+            # YES locked: observed min already below threshold by ≥TEMP_MARGIN_F
+            if obs_min <= threshold_f - TEMP_MARGIN_F and yes_ask_c <= MAX_PRICE_C:
                 side, price_c, observed_temp = "yes", yes_ask_c, obs_min
-                reason = f"observed_min={obs_min:.1f}°F ≤ threshold={threshold_f}°F - 1"
-            # NO locked: observed AND remaining forecast both stay above threshold + 2
-            elif (min(obs_min, forecast_remaining_min) > threshold_f + 2.0
+                reason = f"observed_min={obs_min:.1f}°F ≤ threshold={threshold_f}°F - {TEMP_MARGIN_F}"
+            # NO locked: observed AND remaining forecast both stay above threshold + margin
+            elif (min(obs_min, forecast_remaining_min) > threshold_f + TEMP_MARGIN_F
                   and no_ask_c <= MAX_PRICE_C):
                 side, price_c, observed_temp = "no", no_ask_c, min(obs_min, forecast_remaining_min)
-                reason = f"min(obs,fcst)={min(obs_min, forecast_remaining_min):.1f}°F > threshold={threshold_f}°F + 2"
+                reason = f"min(obs,fcst)={min(obs_min, forecast_remaining_min):.1f}°F > threshold={threshold_f}°F + {TEMP_MARGIN_F}"
 
         if side is None:
             return None
@@ -266,12 +267,16 @@ class SettlementStrategy:
         price_c = opp["price_c"]
         edge_c  = opp["edge_c"]
 
-        # Position size: hit the $5 floor in approve_trade by spending at least MIN_TRADE_DOLLARS,
-        # cap at MAX_TRADE_DOLLARS for concentration control.
+        # Tier-aware sizing: target the smaller of MAX_TRADE_DOLLARS and the
+        # tier-adjusted per-position cap. If that's below the $5 global floor,
+        # the tier is too tight to trade safely — skip.
         price_dollars = price_c / 100
-        contracts = max(int(MIN_TRADE_DOLLARS / price_dollars),
-                        int(MAX_TRADE_DOLLARS / price_dollars))
-        contracts = min(contracts, int(MAX_TRADE_DOLLARS / price_dollars))
+        tier_cap_dollars = self.risk.balance * self.risk.effective_max_position_pct()
+        target_dollars = min(MAX_TRADE_DOLLARS, tier_cap_dollars)
+        if target_dollars < MIN_TRADE_DOLLARS:
+            log.info(f"[settle] Skip {ticker}: tier cap ${tier_cap_dollars:.2f} below floor ${MIN_TRADE_DOLLARS}")
+            return False
+        contracts = int(target_dollars / price_dollars)
         if contracts <= 0:
             return False
 

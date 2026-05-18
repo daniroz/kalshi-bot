@@ -39,9 +39,9 @@ from utils.logger import log
 # ── Tunables ───────────────────────────────────────────────────────────────────
 SCAN_INTERVAL_S      = 20
 MIN_EDGE_C           = 10
-MIN_TRADE_DOLLARS    = 20.0
-MAX_TRADE_DOLLARS    = 40.0
-MAX_PRICE_C          = 92
+MIN_TRADE_DOLLARS    = 5.0        # honors global risk-manager floor
+MAX_TRADE_DOLLARS    = 35.0
+MAX_PRICE_C          = 89         # ≥10¢ edge → 90+ unreachable; matches math
 RESOLVE_MIN_S        = 60         # 1 min cushion
 RESOLVE_MAX_S        = 30 * 60    # 30 min before close
 QUOTE_CACHE_TTL_S    = 10
@@ -270,10 +270,14 @@ class StockSettlementStrategy:
         price_c = opp["price_c"]
         edge_c  = opp["edge_c"]
 
+        # Tier-aware sizing: target min(MAX_TRADE_DOLLARS, tier-adjusted cap).
         price = price_c / 100
-        contracts = int(MAX_TRADE_DOLLARS / price)
-        if contracts * price < MIN_TRADE_DOLLARS:
-            contracts = max(contracts, int(MIN_TRADE_DOLLARS / price) + 1)
+        tier_cap_dollars = self.risk.balance * self.risk.effective_max_position_pct()
+        target_dollars = min(MAX_TRADE_DOLLARS, tier_cap_dollars)
+        if target_dollars < MIN_TRADE_DOLLARS:
+            log.info(f"[settle-stocks] Skip {ticker}: tier cap ${tier_cap_dollars:.2f} below floor ${MIN_TRADE_DOLLARS}")
+            return False
+        contracts = int(target_dollars / price)
         if contracts <= 0:
             return False
 

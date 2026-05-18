@@ -39,10 +39,10 @@ from strategies.sports import (
 # ── Tunables ───────────────────────────────────────────────────────────────────
 SCAN_INTERVAL_S      = 20
 MIN_EDGE_C           = 10
-MIN_TRADE_DOLLARS    = 20.0
-MAX_TRADE_DOLLARS    = 40.0
-MAX_PRICE_C          = 92
-MIN_WIN_PROB         = 0.995   # very high bar — the game must be essentially over
+MIN_TRADE_DOLLARS    = 5.0        # honors global risk-manager floor
+MAX_TRADE_DOLLARS    = 35.0
+MAX_PRICE_C          = 89         # ≥10¢ edge → 90+ unreachable; matches math
+MIN_WIN_PROB         = 0.995      # very high bar — the game must be essentially over
 
 # Minimum lead in absolute units for each sport before we'll even check win_prob.
 # This is a sanity gate; the win_prob threshold is the real filter.
@@ -198,10 +198,14 @@ class SportsSettlementStrategy:
         price_c = opp["price_c"]
         edge_c  = opp["edge_c"]
 
+        # Tier-aware sizing: target min(MAX_TRADE_DOLLARS, tier-adjusted cap).
         price = price_c / 100
-        contracts = int(MAX_TRADE_DOLLARS / price)
-        if contracts * price < MIN_TRADE_DOLLARS:
-            contracts = max(contracts, int(MIN_TRADE_DOLLARS / price) + 1)
+        tier_cap_dollars = self.risk.balance * self.risk.effective_max_position_pct()
+        target_dollars = min(MAX_TRADE_DOLLARS, tier_cap_dollars)
+        if target_dollars < MIN_TRADE_DOLLARS:
+            log.info(f"[settle-sports] Skip {ticker}: tier cap ${tier_cap_dollars:.2f} below floor ${MIN_TRADE_DOLLARS}")
+            return False
+        contracts = int(target_dollars / price)
         if contracts <= 0:
             return False
 
