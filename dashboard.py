@@ -263,16 +263,23 @@ def fetch_portfolio():
 
 # ── Log parser ────────────────────────────────────────────────────────────────
 
-STRAT_TAGS = ["arb","mm","mis","smart","sports","crypto","weather","intra","ob","mom","news","cal","settle"]
+STRAT_TAGS = ["arb","mm","mis","smart","sports","crypto","weather","intra","ob","mom",
+              "news","cal","settle","settle-crypto","settle-stocks","settle-sports"]
 STRAT_NAMES = {"arb":"Arb","mm":"MM","mis":"Mispricing","smart":"Smart$",
                "sports":"Sports","crypto":"Crypto","weather":"Weather","intra":"Intraday",
                "ob":"Orderbook","mom":"Momentum","news":"News","cal":"Calendar",
-               "settle":"Settlement"}
+               "settle":"Settle-Wx",
+               "settle-crypto":"Settle-Crypto",
+               "settle-stocks":"Settle-Stocks",
+               "settle-sports":"Settle-Sports"}
 # Map dashboard short tags → the env var names main.py actually reads
 STRAT_ENV = {"arb":"ARBITRAGE","mm":"MARKET_MAKER","mis":"MISPRICING","smart":"SMART_MONEY",
              "sports":"SPORTS","crypto":"CRYPTO","weather":"WEATHER","intra":"INTRADAY",
              "ob":"ORDERBOOK","mom":"MOMENTUM","news":"NEWS","cal":"CALENDAR",
-             "settle":"SETTLEMENT"}
+             "settle":"SETTLEMENT",
+             "settle-crypto":"SETTLEMENT_CRYPTO",
+             "settle-stocks":"SETTLEMENT_STOCKS",
+             "settle-sports":"SETTLEMENT_SPORTS"}
 
 def parse_log():
     cycle = 0

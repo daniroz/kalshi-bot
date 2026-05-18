@@ -41,6 +41,9 @@ from strategies.crypto import CryptoStrategy
 from strategies.news import NewsStrategy
 from strategies.calendar import CalendarStrategy
 from strategies.settlement import SettlementStrategy
+from strategies.settlement_crypto import CryptoSettlementStrategy
+from strategies.settlement_stocks import StockSettlementStrategy
+from strategies.settlement_sports import SportsSettlementStrategy
 from coach import Coach
 from utils.logger import log, console
 from utils.alerts import alert_trade, alert_error, alert_balance, alert_halt
@@ -178,7 +181,10 @@ def main_loop(kalshi, poly, risk):
     crypto  = CryptoStrategy(kalshi, risk)
     news    = NewsStrategy(kalshi, risk)
     cal     = CalendarStrategy(kalshi, risk)
-    settle  = SettlementStrategy(kalshi, risk)
+    settle        = SettlementStrategy(kalshi, risk)
+    settle_crypto = CryptoSettlementStrategy(kalshi, risk)
+    settle_stocks = StockSettlementStrategy(kalshi, risk)
+    settle_sports = SportsSettlementStrategy(kalshi, risk)
 
     # On restart, block re-entry into any ticker risk manager already holds.
     # Strategies use _last_entry to enforce per-ticker cooldowns.
@@ -200,7 +206,10 @@ def main_loop(kalshi, poly, risk):
     use_crypto   = os.getenv("STRATEGY_CRYPTO",        "true").lower() == "true"
     use_news     = os.getenv("STRATEGY_NEWS",          "true").lower() == "true"
     use_cal      = os.getenv("STRATEGY_CALENDAR",      "true").lower() == "true"
-    use_settle   = os.getenv("STRATEGY_SETTLEMENT",    "true").lower() == "true"
+    use_settle        = os.getenv("STRATEGY_SETTLEMENT",        "true").lower() == "true"
+    use_settle_crypto = os.getenv("STRATEGY_SETTLEMENT_CRYPTO", "true").lower() == "true"
+    use_settle_stocks = os.getenv("STRATEGY_SETTLEMENT_STOCKS", "true").lower() == "true"
+    use_settle_sports = os.getenv("STRATEGY_SETTLEMENT_SPORTS", "true").lower() == "true"
 
     cycle = 0
     LOOP_INTERVAL      = 15  # seconds between cycles
@@ -324,11 +333,27 @@ def main_loop(kalshi, poly, risk):
                     for opp in settle.scan()[:10]:
                         settle.execute(opp)
 
-            with ThreadPoolExecutor(max_workers=13) as ex:
+            def run_settle_crypto():
+                if use_settle_crypto:
+                    for opp in settle_crypto.scan()[:10]:
+                        settle_crypto.execute(opp)
+
+            def run_settle_stocks():
+                if use_settle_stocks:
+                    for opp in settle_stocks.scan()[:10]:
+                        settle_stocks.execute(opp)
+
+            def run_settle_sports():
+                if use_settle_sports:
+                    for opp in settle_sports.scan()[:10]:
+                        settle_sports.execute(opp)
+
+            with ThreadPoolExecutor(max_workers=16) as ex:
                 futures = [ex.submit(f) for f in (
                     run_smart, run_weather, run_mis, run_arb, run_mm,
                     run_ob, run_mom, run_intra, run_sports, run_crypto,
                     run_news, run_cal, run_settle,
+                    run_settle_crypto, run_settle_stocks, run_settle_sports,
                 )]
                 for f in as_completed(futures):
                     try:
