@@ -43,6 +43,7 @@ MIN_EDGE_C           = 10           # 10¢ per contract minimum AFTER fees
 MIN_TRADE_DOLLARS    = 5.0          # honors global risk-manager floor
 MAX_TRADE_DOLLARS    = 35.0
 MAX_PRICE_C          = 89           # ≥10¢ edge requirement → 90+ unreachable; matches math
+MIN_PRICE_C          = 20           # MARKET-SANITY: market knows things we don't; respect it
 RESOLVE_MIN_S        = 60           # need ≥1 min — slippage cushion
 RESOLVE_MAX_S        = 90 * 60      # 90 min out, spot drift is too risky
 PRICE_CACHE_TTL_S    = 5            # refresh spot every 5s
@@ -195,15 +196,24 @@ class CryptoSettlementStrategy:
         side = price_c = reason = None
 
         # Spot comfortably above threshold → YES locked
-        if spot >= threshold + margin_required and yes_ask_c <= MAX_PRICE_C:
+        if spot >= threshold + margin_required and MIN_PRICE_C <= yes_ask_c <= MAX_PRICE_C:
             side, price_c = "yes", yes_ask_c
             reason = (f"spot=${spot:,.2f} ≥ threshold=${threshold:,.2f} + "
                       f"{margin_required:,.2f} ({seconds_left/60:.1f}min)")
+        elif spot >= threshold + margin_required and yes_ask_c < MIN_PRICE_C:
+            log.warning(f"[settle-crypto] SKIP {ticker}: model says YES locked "
+                        f"(spot=${spot:,.2f}≥${threshold:,.2f}) but market prices "
+                        f"YES at {yes_ask_c}¢ — listen to market.")
+            return None
         # Spot comfortably below threshold → NO locked
-        elif spot <= threshold - margin_required and no_ask_c <= MAX_PRICE_C:
+        elif spot <= threshold - margin_required and MIN_PRICE_C <= no_ask_c <= MAX_PRICE_C:
             side, price_c = "no", no_ask_c
             reason = (f"spot=${spot:,.2f} ≤ threshold=${threshold:,.2f} - "
                       f"{margin_required:,.2f} ({seconds_left/60:.1f}min)")
+        elif spot <= threshold - margin_required and no_ask_c < MIN_PRICE_C:
+            log.warning(f"[settle-crypto] SKIP {ticker}: model says NO locked "
+                        f"but market prices NO at {no_ask_c}¢ — listen to market.")
+            return None
 
         if side is None:
             return None

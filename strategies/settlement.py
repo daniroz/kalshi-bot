@@ -56,6 +56,7 @@ MIN_EDGE_C           = 10        # 10¢ per contract minimum edge AFTER fees
 MIN_TRADE_DOLLARS    = 5.0       # honors global risk-manager floor
 MAX_TRADE_DOLLARS    = 35.0      # cap any single bet; this is concentrated risk
 MAX_PRICE_C          = 89        # ≥10¢ edge requirement makes 90+ unreachable; matches math
+MIN_PRICE_C          = 20        # MARKET-SANITY: refuse if order book screams disagreement
 SCAN_INTERVAL_S      = 60        # tight loop — observed data updates hourly
 OBS_CACHE_TTL_S      = 600       # re-fetch observations every 10 min
 TEMP_MARGIN_F        = 2.0       # require 2°F buffer (was 1°F — Open-Meteo vs station mismatch)
@@ -183,14 +184,24 @@ class SettlementStrategy:
             obs_max = obs["observed_max"] or -999
             forecast_remaining_max = obs["forecast_max"] or obs_max
             # YES is locked: observed max already exceeds threshold by ≥TEMP_MARGIN_F
-            if obs_max >= threshold_f + TEMP_MARGIN_F and yes_ask_c <= MAX_PRICE_C:
+            if obs_max >= threshold_f + TEMP_MARGIN_F and MIN_PRICE_C <= yes_ask_c <= MAX_PRICE_C:
                 side, price_c, observed_temp = "yes", yes_ask_c, obs_max
                 reason = f"observed_max={obs_max:.1f}°F ≥ threshold={threshold_f}°F + {TEMP_MARGIN_F}"
+            elif obs_max >= threshold_f + TEMP_MARGIN_F and yes_ask_c < MIN_PRICE_C:
+                log.warning(f"[settle] SKIP {ticker}: model says YES locked "
+                            f"(obs_max={obs_max:.1f}°F≥{threshold_f}°F) but market "
+                            f"prices YES at {yes_ask_c}¢ — listen to market.")
+                return None
             # NO is locked: both observed and rest-of-day forecast won't reach threshold
             elif (max(obs_max, forecast_remaining_max) < threshold_f - TEMP_MARGIN_F
-                  and no_ask_c <= MAX_PRICE_C):
+                  and MIN_PRICE_C <= no_ask_c <= MAX_PRICE_C):
                 side, price_c, observed_temp = "no", no_ask_c, max(obs_max, forecast_remaining_max)
                 reason = f"max(obs,fcst)={max(obs_max, forecast_remaining_max):.1f}°F < threshold={threshold_f}°F - {TEMP_MARGIN_F}"
+            elif (max(obs_max, forecast_remaining_max) < threshold_f - TEMP_MARGIN_F
+                  and no_ask_c < MIN_PRICE_C):
+                log.warning(f"[settle] SKIP {ticker}: model says NO locked but market "
+                            f"prices NO at {no_ask_c}¢ — listen to market.")
+                return None
 
         else:   # low
             obs_min = obs["observed_min"]
@@ -200,14 +211,23 @@ class SettlementStrategy:
             if forecast_remaining_min is None:
                 forecast_remaining_min = obs_min
             # YES locked: observed min already below threshold by ≥TEMP_MARGIN_F
-            if obs_min <= threshold_f - TEMP_MARGIN_F and yes_ask_c <= MAX_PRICE_C:
+            if obs_min <= threshold_f - TEMP_MARGIN_F and MIN_PRICE_C <= yes_ask_c <= MAX_PRICE_C:
                 side, price_c, observed_temp = "yes", yes_ask_c, obs_min
                 reason = f"observed_min={obs_min:.1f}°F ≤ threshold={threshold_f}°F - {TEMP_MARGIN_F}"
+            elif obs_min <= threshold_f - TEMP_MARGIN_F and yes_ask_c < MIN_PRICE_C:
+                log.warning(f"[settle] SKIP {ticker}: model says YES locked but market "
+                            f"prices YES at {yes_ask_c}¢ — listen to market.")
+                return None
             # NO locked: observed AND remaining forecast both stay above threshold + margin
             elif (min(obs_min, forecast_remaining_min) > threshold_f + TEMP_MARGIN_F
-                  and no_ask_c <= MAX_PRICE_C):
+                  and MIN_PRICE_C <= no_ask_c <= MAX_PRICE_C):
                 side, price_c, observed_temp = "no", no_ask_c, min(obs_min, forecast_remaining_min)
                 reason = f"min(obs,fcst)={min(obs_min, forecast_remaining_min):.1f}°F > threshold={threshold_f}°F + {TEMP_MARGIN_F}"
+            elif (min(obs_min, forecast_remaining_min) > threshold_f + TEMP_MARGIN_F
+                  and no_ask_c < MIN_PRICE_C):
+                log.warning(f"[settle] SKIP {ticker}: model says NO locked but market "
+                            f"prices NO at {no_ask_c}¢ — listen to market.")
+                return None
 
         if side is None:
             return None

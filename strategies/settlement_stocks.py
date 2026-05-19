@@ -42,9 +42,16 @@ MIN_EDGE_C           = 10
 MIN_TRADE_DOLLARS    = 5.0        # honors global risk-manager floor
 MAX_TRADE_DOLLARS    = 35.0
 MAX_PRICE_C          = 89         # ≥10¢ edge → 90+ unreachable; matches math
-RESOLVE_MIN_S        = 60         # 1 min cushion
+MIN_PRICE_C          = 20         # MARKET-SANITY FLOOR (see below)
+RESOLVE_MIN_S        = 180        # was 60 — last 3min is where crashes happen + Yahoo lag bites
 RESOLVE_MAX_S        = 30 * 60    # 30 min before close
 QUOTE_CACHE_TTL_S    = 10
+
+# MARKET-SANITY FLOOR: if our model says "locked at 99%" but the order book
+# prices it below MIN_PRICE_C, the market knows something we don't (typically
+# our data feed is lagging a real-time move). Refuse the trade — listen to
+# the market. This is THE check that would have prevented the KXINX-MAY19
+# disaster: yes_ask was 1¢, our model said locked, market was correct, we lost.
 
 # Kalshi series → Yahoo Finance symbol
 SUPPORTED_SERIES = {
@@ -214,14 +221,24 @@ class StockSettlementStrategy:
             return None
 
         side = price_c = reason = None
-        if quote >= threshold + margin and yes_ask_c <= MAX_PRICE_C:
+        if quote >= threshold + margin and MIN_PRICE_C <= yes_ask_c <= MAX_PRICE_C:
             side, price_c = "yes", yes_ask_c
             reason = (f"{parsed['symbol']}={quote:.2f} ≥ {threshold:.2f}+{margin:.1f} "
                       f"({seconds_left/60:.1f}min)")
-        elif quote <= threshold - margin and no_ask_c <= MAX_PRICE_C:
+        elif quote <= threshold - margin and MIN_PRICE_C <= no_ask_c <= MAX_PRICE_C:
             side, price_c = "no", no_ask_c
             reason = (f"{parsed['symbol']}={quote:.2f} ≤ {threshold:.2f}-{margin:.1f} "
                       f"({seconds_left/60:.1f}min)")
+        # Catch the dangerous case where our model says LOCKED but market disagrees.
+        # Log it so we can debug — but DO NOT trade.
+        elif quote >= threshold + margin and yes_ask_c < MIN_PRICE_C:
+            log.warning(f"[settle-stocks] SKIP {ticker}: model says YES locked "
+                        f"({parsed['symbol']}={quote:.2f}≥{threshold:.2f}) but market "
+                        f"prices it at {yes_ask_c}¢ — market wins, our data is likely lagging.")
+        elif quote <= threshold - margin and no_ask_c < MIN_PRICE_C:
+            log.warning(f"[settle-stocks] SKIP {ticker}: model says NO locked "
+                        f"({parsed['symbol']}={quote:.2f}≤{threshold:.2f}) but market "
+                        f"prices NO at {no_ask_c}¢ — market wins, our data is likely lagging.")
 
         if side is None:
             return None

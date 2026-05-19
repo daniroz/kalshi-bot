@@ -42,6 +42,7 @@ MIN_EDGE_C           = 10
 MIN_TRADE_DOLLARS    = 5.0        # honors global risk-manager floor
 MAX_TRADE_DOLLARS    = 35.0
 MAX_PRICE_C          = 89         # ≥10¢ edge → 90+ unreachable; matches math
+MIN_PRICE_C          = 20         # MARKET-SANITY: ESPN can lag a buzzer-beater; respect order book
 MIN_WIN_PROB         = 0.995      # very high bar — the game must be essentially over
 
 # Minimum lead in absolute units for each sport before we'll even check win_prob.
@@ -131,15 +132,24 @@ class SportsSettlementStrategy:
         side = price_c = reason = None
 
         # Team is winning — buy YES on this team if it's cheap enough
-        if my_lead >= min_lead and win_prob >= MIN_WIN_PROB and yes_ask_c <= MAX_PRICE_C:
+        if my_lead >= min_lead and win_prob >= MIN_WIN_PROB and MIN_PRICE_C <= yes_ask_c <= MAX_PRICE_C:
             side, price_c = "yes", yes_ask_c
             reason = (f"{team_abbr} leads {my_lead} ({sport} {mins_rem:.1f}rem) "
                       f"win_prob={win_prob*100:.2f}%")
+        elif my_lead >= min_lead and win_prob >= MIN_WIN_PROB and yes_ask_c < MIN_PRICE_C:
+            log.warning(f"[settle-sports] SKIP {ticker}: {team_abbr} leads {my_lead} "
+                        f"(win_prob={win_prob*100:.2f}%) but market prices YES at "
+                        f"{yes_ask_c}¢ — possible score correction or ESPN lag.")
+            return None
         # Team is losing badly — buy NO (= bet the OTHER team wins)
-        elif my_lead <= -min_lead and (1 - win_prob) >= MIN_WIN_PROB and no_ask_c <= MAX_PRICE_C:
+        elif my_lead <= -min_lead and (1 - win_prob) >= MIN_WIN_PROB and MIN_PRICE_C <= no_ask_c <= MAX_PRICE_C:
             side, price_c = "no", no_ask_c
             reason = (f"{team_abbr} trails {-my_lead} ({sport} {mins_rem:.1f}rem) "
                       f"loss_prob={(1-win_prob)*100:.2f}%")
+        elif my_lead <= -min_lead and (1 - win_prob) >= MIN_WIN_PROB and no_ask_c < MIN_PRICE_C:
+            log.warning(f"[settle-sports] SKIP {ticker}: {team_abbr} trails {-my_lead} "
+                        f"but market prices NO at {no_ask_c}¢ — possible score correction or lag.")
+            return None
 
         if side is None:
             return None
