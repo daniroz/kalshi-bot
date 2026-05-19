@@ -56,7 +56,9 @@ ABS_MARGIN_FLOOR_USD = 10.0
 SUPPORTED_SERIES = {
     "KXBTC":  "BTC-USD",
     "KXETH":  "ETH-USD",
-    # Add KXSOL / KXXRP / etc. here as Kalshi adds them; just need the Coinbase pair.
+    "KXDOGE": "DOGE-USD",
+    "KXXRP":  "XRP-USD",
+    # Add KXSOL / KXLTC / KXADA etc. here if Kalshi adds them — just need the Coinbase pair.
 }
 
 # Month parsing for the YYMMMDDHH date format

@@ -44,6 +44,8 @@ from strategies.settlement import SettlementStrategy
 from strategies.settlement_crypto import CryptoSettlementStrategy
 from strategies.settlement_stocks import StockSettlementStrategy
 from strategies.settlement_sports import SportsSettlementStrategy
+from strategies.settlement_commodities import CommoditySettlementStrategy
+from strategies.settlement_forex import ForexSettlementStrategy
 from coach import Coach
 from utils.logger import log, console
 from utils.alerts import alert_trade, alert_error, alert_balance, alert_halt
@@ -185,6 +187,8 @@ def main_loop(kalshi, poly, risk):
     settle_crypto = CryptoSettlementStrategy(kalshi, risk)
     settle_stocks = StockSettlementStrategy(kalshi, risk)
     settle_sports = SportsSettlementStrategy(kalshi, risk)
+    settle_comm   = CommoditySettlementStrategy(kalshi, risk)
+    settle_fx     = ForexSettlementStrategy(kalshi, risk)
 
     # On restart, block re-entry into any ticker risk manager already holds.
     # Strategies use _last_entry to enforce per-ticker cooldowns.
@@ -210,6 +214,8 @@ def main_loop(kalshi, poly, risk):
     use_settle_crypto = os.getenv("STRATEGY_SETTLEMENT_CRYPTO", "true").lower() == "true"
     use_settle_stocks = os.getenv("STRATEGY_SETTLEMENT_STOCKS", "true").lower() == "true"
     use_settle_sports = os.getenv("STRATEGY_SETTLEMENT_SPORTS", "true").lower() == "true"
+    use_settle_comm   = os.getenv("STRATEGY_SETTLEMENT_COMM",   "true").lower() == "true"
+    use_settle_fx     = os.getenv("STRATEGY_SETTLEMENT_FX",     "true").lower() == "true"
 
     cycle = 0
     LOOP_INTERVAL      = 15  # seconds between cycles
@@ -348,12 +354,23 @@ def main_loop(kalshi, poly, risk):
                     for opp in settle_sports.scan()[:10]:
                         settle_sports.execute(opp)
 
-            with ThreadPoolExecutor(max_workers=16) as ex:
+            def run_settle_comm():
+                if use_settle_comm:
+                    for opp in settle_comm.scan()[:10]:
+                        settle_comm.execute(opp)
+
+            def run_settle_fx():
+                if use_settle_fx:
+                    for opp in settle_fx.scan()[:10]:
+                        settle_fx.execute(opp)
+
+            with ThreadPoolExecutor(max_workers=18) as ex:
                 futures = [ex.submit(f) for f in (
                     run_smart, run_weather, run_mis, run_arb, run_mm,
                     run_ob, run_mom, run_intra, run_sports, run_crypto,
                     run_news, run_cal, run_settle,
                     run_settle_crypto, run_settle_stocks, run_settle_sports,
+                    run_settle_comm, run_settle_fx,
                 )]
                 for f in as_completed(futures):
                     try:
