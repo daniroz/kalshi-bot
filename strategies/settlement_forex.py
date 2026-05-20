@@ -49,9 +49,9 @@ MIN_EDGE_C           = 10
 MIN_TRADE_DOLLARS    = 5.0
 MAX_TRADE_DOLLARS    = 25.0       # smaller cap — forex resolution is point-in-time
 MAX_PRICE_C          = 89
-MIN_PRICE_C          = 25         # tighter MARKET-SANITY floor for forex (more news risk)
+MIN_PRICE_C          = 40         # POST-BACKTEST raised 25→40 — require market agreement
 RESOLVE_MIN_S        = 90         # 90s hard stop — last 90s is news-spike-deadly
-RESOLVE_MAX_S        = 30 * 60    # 30 min before resolution
+RESOLVE_MAX_S        = 20 * 60    # 20 min (was 30)
 QUOTE_CACHE_TTL_S    = 5
 
 # Kalshi series → Yahoo Finance forex symbol + pip-margin baseline

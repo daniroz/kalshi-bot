@@ -55,9 +55,9 @@ MIN_EDGE_C           = 10
 MIN_TRADE_DOLLARS    = 5.0
 MAX_TRADE_DOLLARS    = 35.0
 MAX_PRICE_C          = 89
-MIN_PRICE_C          = 20         # MARKET-SANITY floor
+MIN_PRICE_C          = 40         # POST-BACKTEST raised 20→40 — require market agreement
 RESOLVE_MIN_S        = 180        # at least 3min cushion — final 3min is most dangerous
-RESOLVE_MAX_S        = 30 * 60    # 30 min before settle window
+RESOLVE_MAX_S        = 20 * 60    # 20 min (was 30)
 QUOTE_CACHE_TTL_S    = 10
 
 # Kalshi series → Yahoo Finance futures symbol

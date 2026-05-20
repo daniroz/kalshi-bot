@@ -1,0 +1,197 @@
+# ───────────────────────────────────────────────────────────────────────────
+#  Kalshi Bot — Single Source of Truth for Tunables
+# ───────────────────────────────────────────────────────────────────────────
+#  - Anything sensitive (KALSHI_API_KEY, kalshi_private.pem path) stays in .env
+#  - Env-var overrides are still honored; see precedence in README.md
+#  - Edit and either restart the bot OR (some values) wait for next cycle
+#
+#  Schema is validated on load — typos will raise rather than silently default.
+# ───────────────────────────────────────────────────────────────────────────
+
+
+# ── Runtime ─────────────────────────────────────────────────────────────────
+runtime:
+  demo_mode:    false       # true → no real orders (env DEMO_MODE overrides)
+  loop_interval_seconds: 15
+  status_print_every_cycles: 2
+  balance_sync_every_cycles: 1
+
+
+# ── Risk Management ─────────────────────────────────────────────────────────
+risk:
+  starting_balance:         250.0
+  max_position_pct:         0.05   # initial entry: 5% of balance per ticker
+  max_position_scale_pct:   0.08   # total exposure per ticker cap
+  max_daily_loss_pct:       0.08   # halt all trading on -8% day
+  max_open_positions:       20
+  min_edge:                 0.02   # per-contract edge floor in $ (i.e. 2¢)
+  min_trade_dollars:        5.0    # below this, fees dominate — skip
+
+  # Graduated cash-pressure tier ladder. Tiers 0-4 from healthy → emergency.
+  # Below 10% cash, ALL new entries are hard-blocked.
+  cash_tier_thresholds:
+    healthy_min_pct:    0.35
+    mild_min_pct:       0.25
+    moderate_min_pct:   0.15
+    tight_min_pct:      0.10
+  cash_tier_edge_multipliers: [1.0, 1.5, 2.5, 4.0, 999.0]
+  cash_tier_size_multipliers: [1.0, 0.7, 0.4, 0.2, 0.0]
+
+
+# ── Strategies ──────────────────────────────────────────────────────────────
+# Each strategy block has `enabled: true|false` plus its key tunables.
+# Strategies still hold their own hardcoded constants for niche values —
+# this file exposes only the ones likely to be tuned.
+
+strategies:
+
+  # ── STRUCTURAL-EDGE (always-on by default) ──────────────────────────────
+
+  arbitrage:
+    enabled: true
+    min_edge: 0.08              # 8¢ — model risk in title matching warrants this
+    match_threshold: 0.50       # TF-IDF cosine similarity threshold
+
+  market_maker:
+    enabled: true
+    min_volume_24h: 5000.0
+    min_spread_cents: 6         # below 6¢ source spread, we can't beat fees
+    quote_inside_cents: 2
+    min_price_cents: 15
+    max_price_cents: 85
+    max_markets: 3
+    half_fill_exit_seconds: 45
+
+  mispricing:
+    enabled: true
+    min_edge: 0.06              # 6¢ — must beat 2-leg internal arb fees
+
+  # ── VERIFIED-SETTLEMENT (observation-based; ON by default) ──────────────
+
+  settlement_weather:
+    # POST-BACKTEST (2026-05-20): backtest showed 66% win rate × asymmetric payoff
+    # → -$1360 over 238 trades in 5 days. Tightened: MIN_PRICE_C 20→40 so we only
+    # trade when market also agrees (≥40% implied prob), TEMP_MARGIN_F 2.0→3.0
+    # so the underlying must be even more clearly past the threshold.
+    enabled: true
+    min_edge_cents: 10
+    min_price_cents: 40         # raised from 20: require market agreement
+    max_price_cents: 89
+    min_trade_dollars: 5.0
+    max_trade_dollars: 35.0
+    temp_margin_f: 3.0          # raised from 2.0 — observation/station mismatch + safety
+    resolve_window_min_hours: 0.5
+    resolve_window_max_hours: 4.0   # was 8 — closer to settle = more reliable
+    scan_interval_seconds: 60
+
+  settlement_crypto:
+    # POST-BACKTEST: 50% win rate over 90-min window. Tightened: window 90→30 min,
+    # MIN_PRICE_C 20→40. Crypto volatility means a 90-min lockup window is far
+    # too long — by entry we have no edge.
+    enabled: true
+    min_edge_cents: 10
+    min_price_cents: 40         # raised from 20
+    max_price_cents: 89
+    min_trade_dollars: 5.0
+    max_trade_dollars: 35.0
+    abs_margin_floor_usd: 15.0  # raised from 10
+    resolve_window_min_seconds: 60
+    resolve_window_max_seconds: 1800   # 30 min (was 90 min — crypto moves too much over 90)
+    scan_interval_seconds: 30
+
+  settlement_stocks:
+    enabled: true
+    min_edge_cents: 10
+    min_price_cents: 40         # raised from 20
+    max_price_cents: 89
+    min_trade_dollars: 5.0
+    max_trade_dollars: 35.0
+    resolve_window_min_seconds: 180    # last 3 min blocked — Yahoo lag + crash risk
+    resolve_window_max_seconds: 1200   # 20 min (was 30 — stocks reprice fast near close)
+    scan_interval_seconds: 20
+
+  settlement_sports:
+    enabled: true
+    min_edge_cents: 10
+    min_price_cents: 40         # raised from 20
+    max_price_cents: 89
+    min_trade_dollars: 5.0
+    max_trade_dollars: 35.0
+    min_win_prob: 0.995
+    min_lead:
+      nba: 8       # points
+      nhl: 2       # goals
+      mlb: 3       # runs
+    max_time_remaining:
+      nba: 6.0     # minutes
+      nhl: 6.0     # minutes
+      mlb: 3.0     # innings
+    scan_interval_seconds: 20
+
+  settlement_commodities:
+    enabled: true
+    min_edge_cents: 10
+    min_price_cents: 40         # raised from 20
+    max_price_cents: 89
+    min_trade_dollars: 5.0
+    max_trade_dollars: 35.0
+    resolve_window_min_seconds: 180
+    resolve_window_max_seconds: 1200    # 20 min (was 30)
+    scan_interval_seconds: 20
+
+  settlement_forex:
+    enabled: true
+    min_edge_cents: 10
+    min_price_cents: 40         # raised from 25
+    max_price_cents: 89
+    min_trade_dollars: 5.0
+    max_trade_dollars: 25.0     # smaller than other settlement strategies
+    resolve_window_min_seconds: 90
+    resolve_window_max_seconds: 1200    # 20 min (was 30)
+    scan_interval_seconds: 15
+    macro_blackout_minutes: 15  # refuse within ±15 min of 8:30/10:00/14:00 ET releases
+
+  # ── PREDICTIVE (model-based; OFF by default — pending backtest evidence) ─
+
+  smart_money:
+    enabled: false
+
+  sports:
+    enabled: false
+
+  crypto:
+    enabled: false
+
+  weather:
+    enabled: false
+
+  intraday:
+    enabled: false
+
+  orderbook:
+    enabled: false
+
+  momentum:
+    enabled: false
+
+  news:
+    enabled: false
+
+  calendar:
+    enabled: false
+
+
+# ── Coach (monitoring) ──────────────────────────────────────────────────────
+coach:
+  hard_position_limit_pct: 0.08    # warn (not act) when single position exceeds this
+  concentration_alert_pct: 0.15    # warn when single game exceeds this
+  full_report_every_seconds: 600
+  idle_threshold_seconds: 900
+
+
+# ── Dashboard ──────────────────────────────────────────────────────────────
+dashboard:
+  host: "0.0.0.0"
+  port: 5555
+  snapshot_loop_seconds: 30
+  history_max_entries: 43200       # ~15 days at 30s resolution

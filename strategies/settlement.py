@@ -51,15 +51,17 @@ from strategies.weather import SERIES, _parse_ticker, _hours_until_resolution
 
 # ── Tunables ───────────────────────────────────────────────────────────────────
 RESOLVE_WINDOW_MIN_H = 0.5       # don't bother less than 30 min from settle (slippage)
-RESOLVE_WINDOW_MAX_H = 8.0       # past 8h out, observed data isn't yet decisive
+RESOLVE_WINDOW_MAX_H = 4.0       # past 4h out the temperature can still change a lot (was 8.0)
 MIN_EDGE_C           = 10        # 10¢ per contract minimum edge AFTER fees
 MIN_TRADE_DOLLARS    = 5.0       # honors global risk-manager floor
 MAX_TRADE_DOLLARS    = 35.0      # cap any single bet; this is concentrated risk
 MAX_PRICE_C          = 89        # ≥10¢ edge requirement makes 90+ unreachable; matches math
-MIN_PRICE_C          = 20        # MARKET-SANITY: refuse if order book screams disagreement
+# POST-BACKTEST 2026-05-20: raised 20→40. Backtest showed 66% win rate × asymmetric
+# payoff = net negative when market disagreed with our model at low prices.
+MIN_PRICE_C          = 40        # require market agreement (≥40% implied prob)
 SCAN_INTERVAL_S      = 60        # tight loop — observed data updates hourly
 OBS_CACHE_TTL_S      = 600       # re-fetch observations every 10 min
-TEMP_MARGIN_F        = 2.0       # require 2°F buffer (was 1°F — Open-Meteo vs station mismatch)
+TEMP_MARGIN_F        = 3.0       # require 3°F buffer (was 2 — backtest showed 2 wasn't enough)
 
 
 @dataclass

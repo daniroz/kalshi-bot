@@ -42,9 +42,9 @@ MIN_EDGE_C           = 10
 MIN_TRADE_DOLLARS    = 5.0        # honors global risk-manager floor
 MAX_TRADE_DOLLARS    = 35.0
 MAX_PRICE_C          = 89         # ≥10¢ edge → 90+ unreachable; matches math
-MIN_PRICE_C          = 20         # MARKET-SANITY FLOOR (see below)
+MIN_PRICE_C          = 40         # POST-BACKTEST raised 20→40 — require market agreement
 RESOLVE_MIN_S        = 180        # was 60 — last 3min is where crashes happen + Yahoo lag bites
-RESOLVE_MAX_S        = 30 * 60    # 30 min before close
+RESOLVE_MAX_S        = 20 * 60    # 20 min (was 30 — stocks reprice fast near close)
 QUOTE_CACHE_TTL_S    = 10
 
 # MARKET-SANITY FLOOR: if our model says "locked at 99%" but the order book

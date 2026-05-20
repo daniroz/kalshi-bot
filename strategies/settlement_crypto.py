@@ -43,13 +43,13 @@ MIN_EDGE_C           = 10           # 10¢ per contract minimum AFTER fees
 MIN_TRADE_DOLLARS    = 5.0          # honors global risk-manager floor
 MAX_TRADE_DOLLARS    = 35.0
 MAX_PRICE_C          = 89           # ≥10¢ edge requirement → 90+ unreachable; matches math
-MIN_PRICE_C          = 20           # MARKET-SANITY: market knows things we don't; respect it
+# POST-BACKTEST 2026-05-20: raised 20→40. 50% win rate over a 90-min window
+# meant most "verified" trades got reversed by crypto vol before settlement.
+MIN_PRICE_C          = 40           # require market agreement (≥40% implied prob)
 RESOLVE_MIN_S        = 60           # need ≥1 min — slippage cushion
-RESOLVE_MAX_S        = 90 * 60      # 90 min out, spot drift is too risky
+RESOLVE_MAX_S        = 30 * 60      # 30 min (was 90 min — crypto moves too much over 90)
 PRICE_CACHE_TTL_S    = 5            # refresh spot every 5s
-# Absolute-dollar safety floor — % margins can be tiny for cheap assets.
-# E.g. ETH at $2,100 × 0.2% = $4.20, easily wiped by a normal tick.
-ABS_MARGIN_FLOOR_USD = 10.0
+ABS_MARGIN_FLOOR_USD = 15.0         # raised from 10
 
 
 # Pair currently tradeable on Kalshi (extend as new series appear)

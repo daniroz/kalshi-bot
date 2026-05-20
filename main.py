@@ -62,14 +62,9 @@ def build_clients(demo: bool):
 
 
 def build_risk() -> RiskManager:
-    cfg = RiskConfig(
-        starting_balance       = float(os.getenv("STARTING_BALANCE", 500)),
-        max_position_pct       = float(os.getenv("MAX_POSITION_SIZE_PCT", 0.05)),
-        max_position_scale_pct = float(os.getenv("MAX_POSITION_SCALE_PCT", 0.12)),
-        max_daily_loss_pct     = float(os.getenv("MAX_DAILY_LOSS_PCT", 1.0)),
-        max_open_positions     = int(os.getenv("MAX_OPEN_POSITIONS", 999)),
-        min_edge               = float(os.getenv("MIN_EDGE_THRESHOLD", 0.02)),
-    )
+    # Read from config.yaml (env vars still override via utils.config)
+    from utils.config import config
+    cfg = RiskConfig(**config.risk_config_dict())
     return RiskManager(cfg)
 
 
@@ -198,24 +193,26 @@ def main_loop(kalshi, poly, risk):
             if hasattr(_strat, "_last_entry"):
                 _strat._last_entry.setdefault(_ticker, _now)
 
-    use_arb      = os.getenv("STRATEGY_ARBITRAGE",     "true").lower() == "true"
-    use_mm       = os.getenv("STRATEGY_MARKET_MAKER",  "true").lower() == "true"
-    use_mis      = os.getenv("STRATEGY_MISPRICING",    "true").lower() == "true"
-    use_smart    = os.getenv("STRATEGY_SMART_MONEY",   "true").lower() == "true"
-    use_weather  = os.getenv("STRATEGY_WEATHER",       "true").lower() == "true"
-    use_ob       = os.getenv("STRATEGY_ORDERBOOK",     "true").lower() == "true"
-    use_mom      = os.getenv("STRATEGY_MOMENTUM",      "true").lower() == "true"
-    use_intra    = os.getenv("STRATEGY_INTRADAY",      "true").lower() == "true"
-    use_sports   = os.getenv("STRATEGY_SPORTS",        "true").lower() == "true"
-    use_crypto   = os.getenv("STRATEGY_CRYPTO",        "true").lower() == "true"
-    use_news     = os.getenv("STRATEGY_NEWS",          "true").lower() == "true"
-    use_cal      = os.getenv("STRATEGY_CALENDAR",      "true").lower() == "true"
-    use_settle        = os.getenv("STRATEGY_SETTLEMENT",        "true").lower() == "true"
-    use_settle_crypto = os.getenv("STRATEGY_SETTLEMENT_CRYPTO", "true").lower() == "true"
-    use_settle_stocks = os.getenv("STRATEGY_SETTLEMENT_STOCKS", "true").lower() == "true"
-    use_settle_sports = os.getenv("STRATEGY_SETTLEMENT_SPORTS", "true").lower() == "true"
-    use_settle_comm   = os.getenv("STRATEGY_SETTLEMENT_COMM",   "true").lower() == "true"
-    use_settle_fx     = os.getenv("STRATEGY_SETTLEMENT_FX",     "true").lower() == "true"
+    # Strategy enable flags read from config.yaml (env vars still override via utils.config)
+    from utils.config import config as _cfg
+    use_arb      = _cfg.strategy_enabled("arbitrage")
+    use_mm       = _cfg.strategy_enabled("market_maker")
+    use_mis      = _cfg.strategy_enabled("mispricing")
+    use_smart    = _cfg.strategy_enabled("smart_money")
+    use_weather  = _cfg.strategy_enabled("weather")
+    use_ob       = _cfg.strategy_enabled("orderbook")
+    use_mom      = _cfg.strategy_enabled("momentum")
+    use_intra    = _cfg.strategy_enabled("intraday")
+    use_sports   = _cfg.strategy_enabled("sports")
+    use_crypto   = _cfg.strategy_enabled("crypto")
+    use_news     = _cfg.strategy_enabled("news")
+    use_cal      = _cfg.strategy_enabled("calendar")
+    use_settle        = _cfg.strategy_enabled("settlement_weather")
+    use_settle_crypto = _cfg.strategy_enabled("settlement_crypto")
+    use_settle_stocks = _cfg.strategy_enabled("settlement_stocks")
+    use_settle_sports = _cfg.strategy_enabled("settlement_sports")
+    use_settle_comm   = _cfg.strategy_enabled("settlement_commodities")
+    use_settle_fx     = _cfg.strategy_enabled("settlement_forex")
 
     cycle = 0
     LOOP_INTERVAL      = 15  # seconds between cycles
