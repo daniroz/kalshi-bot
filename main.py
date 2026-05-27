@@ -46,6 +46,7 @@ from strategies.settlement_stocks import StockSettlementStrategy
 from strategies.settlement_sports import SportsSettlementStrategy
 from strategies.settlement_commodities import CommoditySettlementStrategy
 from strategies.settlement_forex import ForexSettlementStrategy
+from strategies.ml_calibration import MLCalibrationStrategy
 from coach import Coach
 from utils.logger import log, console
 from utils.alerts import alert_trade, alert_error, alert_balance, alert_halt
@@ -184,6 +185,7 @@ def main_loop(kalshi, poly, risk):
     settle_sports = SportsSettlementStrategy(kalshi, risk)
     settle_comm   = CommoditySettlementStrategy(kalshi, risk)
     settle_fx     = ForexSettlementStrategy(kalshi, risk)
+    ml_cal        = MLCalibrationStrategy(kalshi, risk)
 
     # On restart, block re-entry into any ticker risk manager already holds.
     # Strategies use _last_entry to enforce per-ticker cooldowns.
@@ -213,6 +215,7 @@ def main_loop(kalshi, poly, risk):
     use_settle_sports = _cfg.strategy_enabled("settlement_sports")
     use_settle_comm   = _cfg.strategy_enabled("settlement_commodities")
     use_settle_fx     = _cfg.strategy_enabled("settlement_forex")
+    use_ml_cal        = _cfg.strategy_enabled("ml_calibration")
 
     cycle = 0
     LOOP_INTERVAL      = 15  # seconds between cycles
@@ -243,12 +246,29 @@ def main_loop(kalshi, poly, risk):
                     pos_value = float(bal.get("portfolio_value", 0)) / 100
                     total = cash + pos_value
                     risk.update_balance(total)
+                    # Snapshot equity to SQLite for charting / drawdown queries
+                    try:
+                        from utils.db import log_equity
+                        log_equity(total, cash, pos_value, len(risk.open_positions))
+                    except Exception:
+                        pass
                     # Send balance alert every 30 min
                     if cycle % 120 == 0:
                         starting = float(os.getenv("STARTING_BALANCE", 250))
                         alert_balance(total, total - starting, (total - starting) / starting * 100)
                 except Exception as e:
                     log.warning(f"Balance sync failed: {e}")
+
+            # Sync new fills from Kalshi into SQLite every 20 cycles (~5 min).
+            # Idempotent (INSERT OR IGNORE on fill_id) so safe at any cadence.
+            if cycle % 20 == 0:
+                try:
+                    from utils.db import sync_fills_from_kalshi
+                    n = sync_fills_from_kalshi(kalshi, max_pages=3)
+                    if n:
+                        log.info(f"[db] synced {n} new fill(s) into SQLite")
+                except Exception as e:
+                    log.debug(f"[db] fill sync failed: {e}")
 
             # Sync open_positions with actual Kalshi position_fp every cycle.
             # This is the ground-truth guard: prevents the market maker from
@@ -361,13 +381,21 @@ def main_loop(kalshi, poly, risk):
                     for opp in settle_fx.scan()[:10]:
                         settle_fx.execute(opp)
 
-            with ThreadPoolExecutor(max_workers=18) as ex:
+            def run_ml_cal():
+                # FeatureRecorder runs INSIDE scan() regardless of use_ml_cal
+                # so data is always being collected for future training.
+                opps = ml_cal.scan()
+                if use_ml_cal:
+                    for opp in opps[:5]:
+                        ml_cal.execute(opp)
+
+            with ThreadPoolExecutor(max_workers=20) as ex:
                 futures = [ex.submit(f) for f in (
                     run_smart, run_weather, run_mis, run_arb, run_mm,
                     run_ob, run_mom, run_intra, run_sports, run_crypto,
                     run_news, run_cal, run_settle,
                     run_settle_crypto, run_settle_stocks, run_settle_sports,
-                    run_settle_comm, run_settle_fx,
+                    run_settle_comm, run_settle_fx, run_ml_cal,
                 )]
                 for f in as_completed(futures):
                     try:

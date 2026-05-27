@@ -26,12 +26,12 @@ from utils.markets import get_liquid_markets
 from utils.logger import log
 
 
-MIN_VOLUME_24H    = 5000.0   # 10x stricter — only quote real liquidity
+MIN_VOLUME_24H    = 100.0    # dropped May 24 to access macro markets (Fed/CPI) with wide spreads
 MIN_SPREAD_CENTS  = 6        # below 6¢ source spread we can't beat fees
-QUOTE_INSIDE_C    = 2        # quote 2¢ inside the touch → captures (spread - 4¢)
-MIN_PRICE_CENTS   = 15       # 50¢ is where fee % peaks; avoid extreme prices
-MAX_PRICE_CENTS   = 85
-MAX_MARKETS       = 3
+QUOTE_INSIDE_C    = 1        # was 2; dropped May 23 to make thin spreads tradeable
+MIN_PRICE_CENTS   = 10       # widened from 15 to access macro markets
+MAX_PRICE_CENTS   = 90       # widened from 85
+MAX_MARKETS       = 6        # was 3 — more concurrent quotes now that we have more candidates
 HALF_FILL_EXIT_S  = 45       # was 300; directional drift on half-fills is the #1 leak
 
 def _kalshi_fee_cents(price_c: int, contracts: int) -> float:

@@ -103,6 +103,7 @@ ENV_OVERRIDES: dict[str, tuple[str, type]] = {
     "STRATEGY_SETTLEMENT_SPORTS": ("strategies.settlement_sports.enabled", lambda s: s.lower() == "true"),
     "STRATEGY_SETTLEMENT_COMM":   ("strategies.settlement_commodities.enabled", lambda s: s.lower() == "true"),
     "STRATEGY_SETTLEMENT_FX":     ("strategies.settlement_forex.enabled",  lambda s: s.lower() == "true"),
+    "STRATEGY_ML_CALIBRATION":    ("strategies.ml_calibration.enabled",    lambda s: s.lower() == "true"),
 }
 
 

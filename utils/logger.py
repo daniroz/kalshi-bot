@@ -11,7 +11,8 @@ logging.basicConfig(
     format="%(message)s",
     datefmt="[%X]",
     handlers=[
-        RichHandler(console=console, rich_tracebacks=True, markup=True),
+        # markup=False so [mm], [arb], [settle-*] aren't stripped as Rich color directives
+        RichHandler(console=console, rich_tracebacks=True, markup=False),
         logging.FileHandler("kalshi_bot.log"),
     ],
 )

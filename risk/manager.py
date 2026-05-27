@@ -136,6 +136,27 @@ class RiskManager:
     def approve_trade(
         self,
         ticker: str,
+        yes_price_cents: int,
+        contracts: int,
+        edge_dollars: float,
+    ) -> tuple[bool, str]:
+        """Wrapper around the real approve_trade — logs every decision to SQLite."""
+        result = self._approve_trade_impl(ticker, yes_price_cents, contracts, edge_dollars)
+        try:
+            from utils.db import log_signal
+            ok, reason = result
+            log_signal(
+                ticker=ticker, side=None, price_cents=yes_price_cents,
+                contracts=contracts, edge_dollars=edge_dollars,
+                accepted=ok, reject_reason=None if ok else reason,
+            )
+        except Exception:
+            pass
+        return result
+
+    def _approve_trade_impl(
+        self,
+        ticker: str,
         yes_price_cents: int,  # 1-99
         contracts: int,
         edge_dollars: float,

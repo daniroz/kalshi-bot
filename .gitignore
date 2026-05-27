@@ -24,3 +24,15 @@ build/
 # macOS
 .DS_Store
 bot_state.json
+
+# Backtest output
+backtest_results/
+ml_data/
+*.pkl
+models/
+
+# SQLite runtime data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db

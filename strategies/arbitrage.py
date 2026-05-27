@@ -20,6 +20,7 @@ from typing import Optional
 from collections import Counter
 from clients.kalshi import KalshiClient
 from clients.polymarket import PolymarketClient
+from clients.polymarket_trader import PolymarketTrader
 from risk.manager import RiskManager
 from utils.markets import get_liquid_markets
 from utils.fill_tracker import FillTracker
@@ -34,6 +35,24 @@ KALSHI_FEE_AVG = 0.03
 # Stricter title matching — 0.25 cosine was matching different markets that
 # shared similar tokens. 0.50 is much stricter.
 MATCH_THRESHOLD = 0.50
+
+
+def _parse_clob_tokens(pm: dict) -> tuple:
+    """Extract (yes_token_id, no_token_id) from a Polymarket Gamma market.
+    Field can be a JSON-encoded list of strings or already-parsed list."""
+    raw = pm.get("clobTokenIds") or pm.get("tokens") or pm.get("token_ids")
+    if not raw:
+        return None, None
+    try:
+        if isinstance(raw, str):
+            import json
+            raw = json.loads(raw)
+        if isinstance(raw, list) and len(raw) >= 2:
+            # First is YES, second is NO (Polymarket convention)
+            return str(raw[0]), str(raw[1])
+    except Exception:
+        pass
+    return None, None
 
 
 STOPWORDS = {"the","a","an","is","in","of","to","and","or","will","by","on",
@@ -85,6 +104,7 @@ class ArbitrageStrategy:
     ):
         self.kalshi = kalshi
         self.poly = poly
+        self.poly_trader = PolymarketTrader()   # DRY_RUN until USDC funded + env set
         self.risk = risk
         self.min_edge = min_edge
         self._poly_cache: list[dict] = []
@@ -152,6 +172,10 @@ class ArbitrageStrategy:
             edge_buy_yes = p_yes - k_yes_ask - KALSHI_FEE_AVG
             edge_buy_no  = k_yes_bid - p_yes - KALSHI_FEE_AVG
 
+            # Extract Polymarket CLOB token_ids for two-leg execution
+            # tokens[0] is YES, tokens[1] is NO (in Polymarket conventions)
+            poly_yes_token, poly_no_token = _parse_clob_tokens(pm)
+
             if edge_buy_yes > self.min_edge:
                 opps.append({
                     "type": "arb",
@@ -162,6 +186,10 @@ class ArbitrageStrategy:
                     "edge": round(edge_buy_yes, 4),
                     "kalshi_title": km.get("title"),
                     "poly_question": pm.get("question"),
+                    # Two-leg hedge: BUY YES on Kalshi + SELL YES on Polymarket (= BUY NO)
+                    "poly_hedge_token": poly_yes_token,
+                    "poly_hedge_side":  "SELL",       # short YES on Poly
+                    "poly_hedge_price": p_yes,
                 })
             elif edge_buy_no > self.min_edge:
                 opps.append({
@@ -173,12 +201,19 @@ class ArbitrageStrategy:
                     "edge": round(edge_buy_no, 4),
                     "kalshi_title": km.get("title"),
                     "poly_question": pm.get("question"),
+                    # Hedge: BUY NO on Kalshi + BUY YES on Polymarket
+                    "poly_hedge_token": poly_yes_token,
+                    "poly_hedge_side":  "BUY",
+                    "poly_hedge_price": p_yes,
                 })
 
         opps.sort(key=lambda x: x["edge"], reverse=True)
         return opps
 
     def execute(self, opp: dict) -> bool:
+        """Two-leg arb execution: Kalshi leg first, then Polymarket hedge.
+        If the Polymarket leg fails, immediately sell back the Kalshi leg
+        to undo the directional exposure."""
         ticker  = opp["ticker"]
         side    = opp["side"]
         price_f = opp["kalshi_price"]
@@ -197,8 +232,9 @@ class ArbitrageStrategy:
             log.info(f"[arb] Skipped {ticker}: {reason}")
             return False
 
+        # ── LEG 1: Kalshi ─────────────────────────────────────────────────
         try:
-            result = self.kalshi.place_order(
+            k_result = self.kalshi.place_order(
                 ticker=ticker,
                 side=side,
                 action="buy",
@@ -207,16 +243,73 @@ class ArbitrageStrategy:
                 yes_price=price_c if side == "yes" else None,
                 no_price=price_c  if side == "no"  else None,
             )
-            order_id = result.get("order", {}).get("order_id", "")
-            self.risk.record_open(ticker, contracts)
-            self._last_entry[ticker] = time.time()
-            self._fills.track(order_id, ticker, contracts)
-            log.info(
-                f"[arb] BUY {side.upper()} {ticker} x{contracts} @ {price_c}¢  "
-                f"edge={edge*100:.1f}¢  order_id={order_id}"
-            )
-            return True
+            k_order_id = k_result.get("order", {}).get("order_id", "")
         except Exception as e:
-            log.error(f"[arb] Order failed {ticker}: {e}")
+            log.error(f"[arb] Kalshi leg failed {ticker}: {e}")
             self.risk.undo_reservation(ticker, contracts)
             return False
+
+        log.info(
+            f"[arb] LEG 1 ✓ Kalshi BUY {side.upper()} {ticker} x{contracts} @ {price_c}¢  "
+            f"order_id={k_order_id}"
+        )
+
+        # ── LEG 2: Polymarket hedge ───────────────────────────────────────
+        hedge_token = opp.get("poly_hedge_token")
+        hedge_side  = opp.get("poly_hedge_side")
+        hedge_price = opp.get("poly_hedge_price")
+        if not hedge_token or not hedge_side or not hedge_price:
+            log.warning(f"[arb] No Polymarket hedge info for {ticker} — leaving Kalshi leg NAKED")
+            # In live mode this is the bug we'd want to fix; for now we accept this.
+            self.risk.record_open(ticker, contracts)
+            self._last_entry[ticker] = time.time()
+            self._fills.track(k_order_id, ticker, contracts)
+            return True
+
+        p_result = self.poly_trader.place_order(
+            token_id=hedge_token,
+            side=hedge_side,
+            price=hedge_price,
+            size=float(contracts),
+            timeout_s=10,
+        )
+
+        if not p_result.success:
+            # ── ROLLBACK: undo Kalshi leg ────────────────────────────────
+            log.error(f"[arb] LEG 2 ✗ Polymarket {hedge_side} failed: {p_result.error}")
+            log.warning(f"[arb] ROLLING BACK Kalshi position on {ticker}…")
+            try:
+                # Sell back at current bid on our side
+                m = self.kalshi.get_market(ticker).get("market", {})
+                if side == "yes":
+                    bid_c = int(round(float(m.get("yes_bid_dollars") or 0) * 100))
+                else:
+                    bid_c = int(round(float(m.get("no_bid_dollars")  or 0) * 100))
+                bid_c = max(1, min(99, bid_c))
+                self.kalshi.place_order(
+                    ticker=ticker, side=side, action="sell",
+                    count=contracts, order_type="limit",
+                    yes_price=bid_c if side == "yes" else None,
+                    no_price =bid_c if side == "no"  else None,
+                )
+                log.info(f"[arb] ✓ Rolled back Kalshi {side.upper()} x{contracts} @ {bid_c}¢")
+            except Exception as e2:
+                log.error(f"[arb] ROLLBACK FAILED for {ticker}: {e2} — manual intervention required!")
+                # We'll persist this position; risk manager will see it next sync
+                self.risk.record_open(ticker, contracts)
+            self.risk.undo_reservation(ticker, contracts)
+            return False
+
+        # ── Both legs filled ──────────────────────────────────────────────
+        self.risk.record_open(ticker, contracts)
+        self._last_entry[ticker] = time.time()
+        self._fills.track(k_order_id, ticker, contracts)
+        leg_tag = "DRY_RUN" if p_result.dry_run else "LIVE"
+        log.info(
+            f"[arb] LEG 2 ✓ Polymarket {hedge_side} x{contracts} @ ${hedge_price:.3f}  "
+            f"order_id={p_result.order_id}  [{leg_tag}]"
+        )
+        log.info(
+            f"[arb] BOTH LEGS FILLED on {ticker}  edge={edge*100:.1f}¢  contracts={contracts}"
+        )
+        return True

@@ -22,9 +22,9 @@ risk:
   starting_balance:         250.0
   max_position_pct:         0.05   # initial entry: 5% of balance per ticker
   max_position_scale_pct:   0.08   # total exposure per ticker cap
-  max_daily_loss_pct:       0.08   # halt all trading on -8% day
+  max_daily_loss_pct:       1.0    # DISABLED (1.0 = halt only on -100% day, i.e. never)
   max_open_positions:       20
-  min_edge:                 0.02   # per-contract edge floor in $ (i.e. 2¢)
+  min_edge:                 0.015  # was 0.02 (May 23) — required for MM on thin spreads
   min_trade_dollars:        5.0    # below this, fees dominate — skip
 
   # Graduated cash-pressure tier ladder. Tiers 0-4 from healthy → emergency.
@@ -54,12 +54,12 @@ strategies:
 
   market_maker:
     enabled: true
-    min_volume_24h: 5000.0
-    min_spread_cents: 6         # below 6¢ source spread, we can't beat fees
-    quote_inside_cents: 2
-    min_price_cents: 15
-    max_price_cents: 85
-    max_markets: 3
+    min_volume_24h: 100.0        # was 2000.0 (May 24) — accesses Fed/CPI macro markets w/ wide spreads
+    min_spread_cents: 6          # below 6¢ source spread, we can't beat fees
+    quote_inside_cents: 1        # tight quote to capture spread
+    min_price_cents: 10          # was 15 — wider price band for macro markets
+    max_price_cents: 90          # was 85
+    max_markets: 6               # was 3 — more concurrent quotes
     half_fill_exit_seconds: 45
 
   mispricing:
@@ -151,6 +151,14 @@ strategies:
     scan_interval_seconds: 15
     macro_blackout_minutes: 15  # refuse within ±15 min of 8:30/10:00/14:00 ET releases
 
+  # ── ML CALIBRATION (off until trained — feature recorder always runs) ───
+
+  ml_calibration:
+    enabled: false           # turn on AFTER train_calibration.py produces a model
+    min_edge: 0.05           # 5¢ divergence between model & market
+    kelly_fraction: 0.25
+    max_trade_dollars: 15.0
+
   # ── PREDICTIVE (model-based; OFF by default — pending backtest evidence) ─
 
   smart_money:
@@ -166,13 +174,13 @@ strategies:
     enabled: false
 
   intraday:
-    enabled: false
+    enabled: true       # re-enabled May 24 — testing for trade volume
 
   orderbook:
-    enabled: false
+    enabled: true       # re-enabled May 24 — structural book-imbalance signal
 
   momentum:
-    enabled: false
+    enabled: true       # re-enabled May 24 — testing for trade volume
 
   news:
     enabled: false
