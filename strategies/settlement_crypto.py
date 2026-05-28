@@ -41,7 +41,7 @@ from utils.logger import log
 SCAN_INTERVAL_S      = 30           # tight — crypto moves
 MIN_EDGE_C           = 10           # 10¢ per contract minimum AFTER fees
 MIN_TRADE_DOLLARS    = 5.0          # honors global risk-manager floor
-MAX_TRADE_DOLLARS    = 35.0
+MAX_TRADE_DOLLARS    = 70.0       # sized up 2x (May 28)
 MAX_PRICE_C          = 89           # ≥10¢ edge requirement → 90+ unreachable; matches math
 # POST-BACKTEST 2026-05-20: raised 20→40. 50% win rate over a 90-min window
 # meant most "verified" trades got reversed by crypto vol before settlement.

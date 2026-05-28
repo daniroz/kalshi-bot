@@ -47,7 +47,7 @@ from utils.logger import log
 SCAN_INTERVAL_S      = 15
 MIN_EDGE_C           = 10
 MIN_TRADE_DOLLARS    = 5.0
-MAX_TRADE_DOLLARS    = 25.0       # smaller cap — forex resolution is point-in-time
+MAX_TRADE_DOLLARS    = 50.0       # was 25.0 (May 28) — sized up 2x; still smaller cap due to point-in-time resolution risk
 MAX_PRICE_C          = 89
 MIN_PRICE_C          = 40         # POST-BACKTEST raised 25→40 — require market agreement
 RESOLVE_MIN_S        = 90         # 90s hard stop — last 90s is news-spike-deadly

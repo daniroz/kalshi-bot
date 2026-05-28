@@ -20,12 +20,12 @@ runtime:
 # ── Risk Management ─────────────────────────────────────────────────────────
 risk:
   starting_balance:         250.0
-  max_position_pct:         0.05   # initial entry: 5% of balance per ticker
-  max_position_scale_pct:   0.08   # total exposure per ticker cap
+  max_position_pct:         0.10   # was 0.05 (May 28) — sized up 2x per request
+  max_position_scale_pct:   0.20   # was 0.08 — total per-ticker cap raised 2.5x
   max_daily_loss_pct:       1.0    # DISABLED (1.0 = halt only on -100% day, i.e. never)
   max_open_positions:       20
-  min_edge:                 0.015  # was 0.02 (May 23) — required for MM on thin spreads
-  min_trade_dollars:        5.0    # below this, fees dominate — skip
+  min_edge:                 0.015
+  min_trade_dollars:        5.0
 
   # Graduated cash-pressure tier ladder. Tiers 0-4 from healthy → emergency.
   # Below 10% cash, ALL new entries are hard-blocked.
@@ -78,7 +78,7 @@ strategies:
     min_price_cents: 40         # raised from 20: require market agreement
     max_price_cents: 89
     min_trade_dollars: 5.0
-    max_trade_dollars: 35.0
+    max_trade_dollars: 70.0      # was 35.0 (May 28) — 2x
     temp_margin_f: 3.0          # raised from 2.0 — observation/station mismatch + safety
     resolve_window_min_hours: 0.5
     resolve_window_max_hours: 4.0   # was 8 — closer to settle = more reliable
@@ -93,19 +93,22 @@ strategies:
     min_price_cents: 40         # raised from 20
     max_price_cents: 89
     min_trade_dollars: 5.0
-    max_trade_dollars: 35.0
+    max_trade_dollars: 70.0      # was 35.0 (May 28) — 2x
     abs_margin_floor_usd: 15.0  # raised from 10
     resolve_window_min_seconds: 60
     resolve_window_max_seconds: 1800   # 30 min (was 90 min — crypto moves too much over 90)
     scan_interval_seconds: 30
 
   settlement_stocks:
-    enabled: true
+    # DISABLED May 28: -$26.83 (73% of total losses). Repeatedly loses on bin
+    # markets — no real edge on where SPX lands, just guesses and drifts off.
+    # Same strategy that burned $12 on the KXINX-T7050 trade. Done.
+    enabled: false
     min_edge_cents: 10
     min_price_cents: 40         # raised from 20
     max_price_cents: 89
     min_trade_dollars: 5.0
-    max_trade_dollars: 35.0
+    max_trade_dollars: 70.0      # was 35.0 (May 28) — 2x
     resolve_window_min_seconds: 180    # last 3 min blocked — Yahoo lag + crash risk
     resolve_window_max_seconds: 1200   # 20 min (was 30 — stocks reprice fast near close)
     scan_interval_seconds: 20
@@ -116,7 +119,7 @@ strategies:
     min_price_cents: 40         # raised from 20
     max_price_cents: 89
     min_trade_dollars: 5.0
-    max_trade_dollars: 35.0
+    max_trade_dollars: 70.0      # was 35.0 (May 28) — 2x
     min_win_prob: 0.995
     min_lead:
       nba: 8       # points
@@ -134,7 +137,7 @@ strategies:
     min_price_cents: 40         # raised from 20
     max_price_cents: 89
     min_trade_dollars: 5.0
-    max_trade_dollars: 35.0
+    max_trade_dollars: 70.0      # was 35.0 (May 28) — 2x
     resolve_window_min_seconds: 180
     resolve_window_max_seconds: 1200    # 20 min (was 30)
     scan_interval_seconds: 20
@@ -145,7 +148,7 @@ strategies:
     min_price_cents: 40         # raised from 25
     max_price_cents: 89
     min_trade_dollars: 5.0
-    max_trade_dollars: 25.0     # smaller than other settlement strategies
+    max_trade_dollars: 50.0     # was 25.0 (May 28) — 2x; still smaller cap due to point-in-time risk
     resolve_window_min_seconds: 90
     resolve_window_max_seconds: 1200    # 20 min (was 30)
     scan_interval_seconds: 15
@@ -157,7 +160,7 @@ strategies:
     enabled: false           # turn on AFTER train_calibration.py produces a model
     min_edge: 0.05           # 5¢ divergence between model & market
     kelly_fraction: 0.25
-    max_trade_dollars: 15.0
+    max_trade_dollars: 30.0     # was 15.0 (May 28) — 2x
 
   # ── PREDICTIVE (model-based; OFF by default — pending backtest evidence) ─
 

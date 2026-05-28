@@ -40,7 +40,7 @@ from strategies.sports import (
 SCAN_INTERVAL_S      = 20
 MIN_EDGE_C           = 10
 MIN_TRADE_DOLLARS    = 5.0        # honors global risk-manager floor
-MAX_TRADE_DOLLARS    = 35.0
+MAX_TRADE_DOLLARS    = 70.0       # sized up 2x (May 28)
 MAX_PRICE_C          = 89         # ≥10¢ edge → 90+ unreachable; matches math
 MIN_PRICE_C          = 40         # POST-BACKTEST raised 20→40 — require market agreement
 MIN_WIN_PROB         = 0.995      # very high bar — the game must be essentially over

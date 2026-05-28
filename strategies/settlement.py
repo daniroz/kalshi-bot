@@ -54,7 +54,7 @@ RESOLVE_WINDOW_MIN_H = 0.5       # don't bother less than 30 min from settle (sl
 RESOLVE_WINDOW_MAX_H = 4.0       # past 4h out the temperature can still change a lot (was 8.0)
 MIN_EDGE_C           = 10        # 10¢ per contract minimum edge AFTER fees
 MIN_TRADE_DOLLARS    = 5.0       # honors global risk-manager floor
-MAX_TRADE_DOLLARS    = 35.0      # cap any single bet; this is concentrated risk
+MAX_TRADE_DOLLARS    = 70.0      # was 35.0 (May 28) — sized up 2x per request
 MAX_PRICE_C          = 89        # ≥10¢ edge requirement makes 90+ unreachable; matches math
 # POST-BACKTEST 2026-05-20: raised 20→40. Backtest showed 66% win rate × asymmetric
 # payoff = net negative when market disagreed with our model at low prices.

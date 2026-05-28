@@ -53,7 +53,7 @@ MIN_EDGE            = 0.05       # require ≥5¢ divergence between model & mar
 MIN_PRICE_C         = 15         # don't bet extreme prices
 MAX_PRICE_C         = 85
 MIN_TRADE_DOLLARS   = 5.0
-MAX_TRADE_DOLLARS   = 15.0       # small until we trust the model
+MAX_TRADE_DOLLARS   = 30.0       # was 15.0 (May 28) — sized up 2x; still smaller than other strategies until model is trusted
 KELLY_FRACTION      = 0.25       # quarter Kelly — conservative
 
 # Series we consider "in scope" for the model — exclude one-off / weird stuff
