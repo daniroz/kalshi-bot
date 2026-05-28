@@ -154,6 +154,17 @@ strategies:
     scan_interval_seconds: 15
     macro_blackout_minutes: 15  # refuse within ±15 min of 8:30/10:00/14:00 ET releases
 
+  # ── FAVORITE-LONGSHOT BIAS (Monte Carlo: +$139/season, 92% profitable) ──
+  # Buy the underpriced favorite side (85-94¢) of liquid markets, hold to
+  # resolution. Edge is small + empirical; logs implied_prob so we can verify
+  # the realized win rate actually matches the bias on Kalshi specifically.
+  favorite_bias:
+    enabled: true
+    min_volume_24h: 2000.0
+    fav_price_min_c: 85
+    fav_price_max_c: 94
+    max_trade_dollars: 50.0
+
   # ── ML CALIBRATION (off until trained — feature recorder always runs) ───
 
   ml_calibration:

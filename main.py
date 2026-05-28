@@ -47,6 +47,7 @@ from strategies.settlement_sports import SportsSettlementStrategy
 from strategies.settlement_commodities import CommoditySettlementStrategy
 from strategies.settlement_forex import ForexSettlementStrategy
 from strategies.ml_calibration import MLCalibrationStrategy
+from strategies.favorite_bias import FavoriteBiasStrategy
 from coach import Coach
 from utils.logger import log, console
 from utils.alerts import alert_trade, alert_error, alert_balance, alert_halt
@@ -186,6 +187,7 @@ def main_loop(kalshi, poly, risk):
     settle_comm   = CommoditySettlementStrategy(kalshi, risk)
     settle_fx     = ForexSettlementStrategy(kalshi, risk)
     ml_cal        = MLCalibrationStrategy(kalshi, risk)
+    favbias       = FavoriteBiasStrategy(kalshi, risk)
 
     # On restart, block re-entry into any ticker risk manager already holds.
     # Strategies use _last_entry to enforce per-ticker cooldowns.
@@ -216,6 +218,7 @@ def main_loop(kalshi, poly, risk):
     use_settle_comm   = _cfg.strategy_enabled("settlement_commodities")
     use_settle_fx     = _cfg.strategy_enabled("settlement_forex")
     use_ml_cal        = _cfg.strategy_enabled("ml_calibration")
+    use_favbias       = _cfg.strategy_enabled("favorite_bias")
 
     cycle = 0
     LOOP_INTERVAL      = 15  # seconds between cycles
@@ -389,13 +392,18 @@ def main_loop(kalshi, poly, risk):
                     for opp in opps[:5]:
                         ml_cal.execute(opp)
 
-            with ThreadPoolExecutor(max_workers=20) as ex:
+            def run_favbias():
+                if use_favbias:
+                    for opp in favbias.scan()[:8]:
+                        favbias.execute(opp)
+
+            with ThreadPoolExecutor(max_workers=21) as ex:
                 futures = [ex.submit(f) for f in (
                     run_smart, run_weather, run_mis, run_arb, run_mm,
                     run_ob, run_mom, run_intra, run_sports, run_crypto,
                     run_news, run_cal, run_settle,
                     run_settle_crypto, run_settle_stocks, run_settle_sports,
-                    run_settle_comm, run_settle_fx, run_ml_cal,
+                    run_settle_comm, run_settle_fx, run_ml_cal, run_favbias,
                 )]
                 for f in as_completed(futures):
                     try:
