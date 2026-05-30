@@ -34,6 +34,18 @@ MAX_PRICE_CENTS   = 90       # widened from 85
 MAX_MARKETS       = 6        # was 3 — more concurrent quotes now that we have more candidates
 HALF_FILL_EXIT_S  = 45       # was 300; directional drift on half-fills is the #1 leak
 
+# EXCLUDE_PREFIXES (added May 30 after -$9.95 mm-macro bleed):
+# These series have wide spreads because they're informed-flow markets (Fed
+# decisions, CPI prints, payrolls). MM gets picked off on every fill. Stick
+# to noise-trader markets (sports, etc.) where the spread is real edge.
+EXCLUDE_PREFIXES  = {
+    "KXFED", "KXCPI", "KXGDP", "KXUNEMPLOYMENT", "KXNFP", "KXFEDDECISION",
+    "KXOIL", "KXGOLD", "KXNATGAS", "KXSILVER",
+    "KXTRUMPPOLLDAILY", "KXMORTGAGE",   # political/macro = informed flow
+    # Stock-index BIN markets — the settle-stocks debacle. Same toxic flow.
+    "KXINX", "KXNDAQ", "KXSPXCLOSE", "KXDJI",
+}
+
 def _kalshi_fee_cents(price_c: int, contracts: int) -> float:
     """Kalshi fee formula in cents for a given price/size."""
     p = price_c / 100
@@ -81,6 +93,11 @@ class MarketMakerStrategy:
             log.info(f"[mm] Orphan cleanup: cancelled {n_cancelled} stale resting orders from prior session")
 
     def _is_good_market(self, m: dict) -> bool:
+        # Exclude informed-flow series (see EXCLUDE_PREFIXES comment at top)
+        ticker = m.get("ticker", "")
+        series = ticker.split("-")[0] if "-" in ticker else ticker
+        if series in EXCLUDE_PREFIXES:
+            return False
         vol  = float(m.get("volume_24h_fp") or 0)
         bid  = float(m.get("yes_bid_dollars") or 0)
         ask  = float(m.get("yes_ask_dollars") or 0)

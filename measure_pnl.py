@@ -59,7 +59,7 @@ def main():
     args = p.parse_args()
 
     try:
-        r = httpx.get(args.url, timeout=10)
+        r = httpx.get(args.url, timeout=60)
         r.raise_for_status()
         d = r.json()
     except Exception as e:
