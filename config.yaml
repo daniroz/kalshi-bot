@@ -165,6 +165,14 @@ strategies:
     fav_price_max_c: 97   # extended from 94 May 31 — extreme favorites also +EV (simulate_v2.py)
     max_trade_dollars: 50.0
 
+  # ── BASKET-SUM ARBITRAGE — scanner-first (sim says +EV, empirical TBD) ──
+  # See simulate_v3.py: Sharpe 2.75 base / 1.63 pessimistic, 100% profitable
+  # seasons. But May 22 probe showed sums on liquid baskets were $1.02+,
+  # already arbed away. Scanner runs to find real opportunities; TRADING_ENABLED
+  # flag inside basket_arb.py stays False until we see ≥1 real opp per week.
+  basket_arb:
+    enabled: true       # scanner runs; trading still gated in-file
+
   # ── ML CALIBRATION (off until trained — feature recorder always runs) ───
 
   ml_calibration:

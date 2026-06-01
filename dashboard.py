@@ -265,7 +265,7 @@ def fetch_portfolio():
 
 STRAT_TAGS = ["arb","mm","mis","smart","sports","crypto","weather","intra","ob","mom",
               "news","cal","settle","settle-crypto","settle-stocks","settle-sports",
-              "settle-comm","settle-fx","ml-cal","favbias"]
+              "settle-comm","settle-fx","ml-cal","favbias","basket"]
 STRAT_NAMES = {"arb":"Arb","mm":"MM","mis":"Mispricing","smart":"Smart$",
                "sports":"Sports","crypto":"Crypto","weather":"Weather","intra":"Intraday",
                "ob":"Orderbook","mom":"Momentum","news":"News","cal":"Calendar",
@@ -276,7 +276,8 @@ STRAT_NAMES = {"arb":"Arb","mm":"MM","mis":"Mispricing","smart":"Smart$",
                "settle-comm":"Settle-Comm",
                "settle-fx":"Settle-FX",
                "ml-cal":"ML-Calib",
-               "favbias":"FavBias"}
+               "favbias":"FavBias",
+               "basket":"BasketArb"}
 # Map dashboard short tags → the env var names main.py actually reads
 STRAT_ENV = {"arb":"ARBITRAGE","mm":"MARKET_MAKER","mis":"MISPRICING","smart":"SMART_MONEY",
              "sports":"SPORTS","crypto":"CRYPTO","weather":"WEATHER","intra":"INTRADAY",
@@ -288,7 +289,8 @@ STRAT_ENV = {"arb":"ARBITRAGE","mm":"MARKET_MAKER","mis":"MISPRICING","smart":"S
              "settle-comm":"SETTLEMENT_COMM",
              "settle-fx":"SETTLEMENT_FX",
              "ml-cal":"ML_CALIBRATION",
-             "favbias":"FAVORITE_BIAS"}
+             "favbias":"FAVORITE_BIAS",
+             "basket":"BASKET_ARB"}
 
 def parse_log():
     cycle = 0
