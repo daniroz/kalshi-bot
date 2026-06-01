@@ -162,7 +162,7 @@ strategies:
     enabled: true
     min_volume_24h: 2000.0
     fav_price_min_c: 85
-    fav_price_max_c: 94
+    fav_price_max_c: 97   # extended from 94 May 31 — extreme favorites also +EV (simulate_v2.py)
     max_trade_dollars: 50.0
 
   # ── ML CALIBRATION (off until trained — feature recorder always runs) ───

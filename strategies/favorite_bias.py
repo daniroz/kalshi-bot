@@ -47,7 +47,9 @@ from utils.logger import log
 # ── Tunables ───────────────────────────────────────────────────────────────────
 MIN_VOLUME_24H    = 2000.0    # lowered from 5000 — Kalshi thin; still real volume — price must be meaningful
 FAV_PRICE_MIN_C   = 85        # bias zone floor
-FAV_PRICE_MAX_C   = 94        # above this, fees + genuine upsets eat the edge
+FAV_PRICE_MAX_C   = 97        # extended May 31 from 94 — simulate_v2 showed
+                              # extreme favorites (>94¢) also positive EV due
+                              # to low fees at extremes + persistent bias
 MIN_EDGE_C        = 1.5       # ~3¢ gross bias − ~0.6¢ fee = require ≥1.5¢ net
 MIN_TRADE_DOLLARS = 5.0
 MAX_TRADE_DOLLARS = 50.0
